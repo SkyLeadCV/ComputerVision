@@ -11,6 +11,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from find_free_space import (
+    DRONE_RADIUS_CM, FREE_RAY_BGR, MAX_RANGE_CM, SAFETY_MARGIN_CM, STOP_COLORS_BGR, STOP_OBSTACLE, STOP_RANGE,
+    SWEEP_STEP_DEG,
+)
 from image_io import write_image
 
 OUTPUT_DIR = Path("flights")
@@ -18,12 +22,7 @@ OUTPUT_DIR = Path("flights")
 # Rectangles as (x_min, y_min, x_max, y_max) in cm, in the protocol frame: origin at take-off, x right,
 # y forward. 10 x 8 m is the classroom size the voxel map is planned for.
 ROOM = (-200, -100, 800, 700)
-OBSTACLES = [
-    (150, 250, 310, 330),  # table
-    (450, 250, 610, 330),  # table
-    (-200, 350, -140, 470),  # cabinet against the left wall
-    (300, 640, 420, 700),  # rack against the far wall
-]
+OBSTACLES = [(150, 250, 310, 330), (450, 250, 610, 330), (-200, 350, -140, 470), (300, 640, 420, 700)]
 VICTIMS = [(650, 520), (-80, 600)]
 
 # Every leg keeps at least 90 cm from walls and furniture, well above the 24 cm the planner requires,
@@ -34,16 +33,13 @@ ROUTE = [
     "forward 200", "forward 100", "ccw 90", "forward 200", "forward 200", "forward 150", "cw 180",
 ]
 
+# Tello camera field of view from the calibrated intrinsics, and the height it holds in the classroom
+# (76-83 cm), so the synthetic blind zone matches the real one.
 HFOV_DEG = 54.5
 VFOV_UP_DEG = 20.4
 VFOV_DOWN_DEG = 22.1
 FLIGHT_HEIGHT_CM = 82.0
-DRONE_RADIUS_CM = 9
-SAFETY_MARGIN_CM = 15
-# Same sweep step and range as find_free_space.py, so Unity receives rays of the real density.
-RAY_STEP_DEG = 0.5
-MAX_RANGE_CM = 600
-STOP_OBSTACLE, STOP_RANGE = 0, 2
+# A plausible YOLO score; Unity only displays it.
 VICTIM_CONFIDENCE = 0.9
 
 # Rough Tello figures. They only space the messages in time, so a replay looks like a real flight.
@@ -53,6 +49,11 @@ PHOTO_TIME_S = 1.0
 
 DEFAULT_PORT = 5005
 TOP_VIEW_MARGIN_PX = 20
+BACKGROUND_BGR = (255, 255, 255)
+WALL_BGR = (0, 0, 0)
+OBSTACLE_BGR = (120, 120, 120)
+VICTIM_BGR = (0, 0, 200)
+ROUTE_BGR = (200, 80, 0)
 
 
 def rect_segments(rect: tuple) -> list[tuple]:
@@ -93,10 +94,11 @@ def entry_cm(angle_deg: float) -> float:
 
 
 def observe(pose: dict) -> tuple[dict, list[int]]:
-    half_rays = int(HFOV_DEG / 2 / RAY_STEP_DEG)
+    # Same angular step and range as find_free_space.py, so Unity receives rays of the real density.
+    half_rays = int(HFOV_DEG / 2 / SWEEP_STEP_DEG)
     rays = {"angle_deg": [], "entry_cm": [], "stop_cm": [], "kind": []}
     for i in range(-half_rays, half_rays + 1):
-        angle = i * RAY_STEP_DEG
+        angle = i * SWEEP_STEP_DEG
         hit = ray_hit_cm(pose["x"], pose["y"], pose["yaw_deg"] + angle)
         stop, kind = (hit, STOP_OBSTACLE) if hit < MAX_RANGE_CM else (MAX_RANGE_CM, STOP_RANGE)
         rays["angle_deg"].append(angle)
@@ -108,7 +110,7 @@ def observe(pose: dict) -> tuple[dict, list[int]]:
     for victim_id, (vx, vy) in enumerate(VICTIMS, start=1):
         distance = math.hypot(vx - pose["x"], vy - pose["y"])
         angle = (math.degrees(math.atan2(vx - pose["x"], vy - pose["y"])) - pose["yaw_deg"] + 180) % 360 - 180
-        ray = round(angle / RAY_STEP_DEG) + half_rays
+        ray = round(angle / SWEEP_STEP_DEG) + half_rays
         if 0 <= ray < len(rays["angle_deg"]) and rays["entry_cm"][ray] < distance < rays["stop_cm"][ray]:
             seen.append(victim_id)
     return rays, seen
@@ -164,7 +166,7 @@ def generate(session: str) -> list[dict]:
 
 def draw_top_view(messages: list[dict]) -> np.ndarray:
     x_min, y_min, x_max, y_max = ROOM
-    image = np.full((y_max - y_min + 2 * TOP_VIEW_MARGIN_PX, x_max - x_min + 2 * TOP_VIEW_MARGIN_PX, 3), 255, np.uint8)
+    image = np.full((y_max - y_min + 2 * TOP_VIEW_MARGIN_PX, x_max - x_min + 2 * TOP_VIEW_MARGIN_PX, 3), BACKGROUND_BGR, np.uint8)
 
     def px(x: float, y: float) -> tuple[int, int]:
         # Image rows grow downwards, the protocol's y grows forward.
@@ -178,21 +180,20 @@ def draw_top_view(messages: list[dict]) -> np.ndarray:
             dx, dy = direction(pose["yaw_deg"] + angle)
             start = px(pose["x"] + entry * dx, pose["y"] + entry * dy)
             end = px(pose["x"] + stop * dx, pose["y"] + stop * dy)
-            cv2.line(image, start, end, (180, 230, 180), 1)
-            if kind == STOP_OBSTACLE:
-                cv2.circle(image, end, 2, (0, 0, 255), -1)
+            cv2.line(image, start, end, FREE_RAY_BGR, 1)
+            cv2.circle(image, end, 2, STOP_COLORS_BGR[kind], -1)
 
     for rect in OBSTACLES:
-        cv2.rectangle(image, px(rect[0], rect[3]), px(rect[2], rect[1]), (120, 120, 120), -1)
-    cv2.rectangle(image, px(x_min, y_max), px(x_max, y_min), (0, 0, 0), 2)
+        cv2.rectangle(image, px(rect[0], rect[3]), px(rect[2], rect[1]), OBSTACLE_BGR, -1)
+    cv2.rectangle(image, px(x_min, y_max), px(x_max, y_min), WALL_BGR, 2)
     for vx, vy in VICTIMS:
-        cv2.circle(image, px(vx, vy), 12, (0, 0, 200), 3)
+        cv2.circle(image, px(vx, vy), 12, VICTIM_BGR, 3)
 
     moves = [m for m in messages if m["type"] == "move"]
     for move in moves:
-        cv2.line(image, px(move["from"]["x"], move["from"]["y"]), px(move["to"]["x"], move["to"]["y"]), (200, 80, 0), 2)
+        cv2.line(image, px(move["from"]["x"], move["from"]["y"]), px(move["to"]["x"], move["to"]["y"]), ROUTE_BGR, 2)
     for move in moves:
-        cv2.circle(image, px(move["to"]["x"], move["to"]["y"]), 5, (200, 80, 0), -1)
+        cv2.circle(image, px(move["to"]["x"], move["to"]["y"]), 5, ROUTE_BGR, -1)
     return image
 
 
