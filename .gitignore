@@ -12,12 +12,14 @@ entorno_dron/
 # Generated outputs (each script recreates them)
 calibration/
 corners/
+distances/
 edges/
 families/
 frames/
 lines/
 morphology/
 segmentation/
+top_view/
 
 # Editors and OS
 .vscode/
