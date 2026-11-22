@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+entorno_dron/
+
+# Drone recordings
+*.mp4
+*.avi
+
+# Generated outputs (each script recreates them)
+calibration/
+corners/
+edges/
+families/
+frames/
+lines/
+morphology/
+segmentation/
+
+# Editors and OS
+.vscode/
+.idea/
+.ipynb_checkpoints/
+Thumbs.db
+.DS_Store
