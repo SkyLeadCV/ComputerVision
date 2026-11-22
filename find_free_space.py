@@ -257,6 +257,48 @@ def bounds_a_ray(angles_deg: np.ndarray, distances: np.ndarray, start: np.ndarra
     return bool(np.any(probe < distances))
 
 
+def close_pockets(rays: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+    """Close every unbounded pocket with a lid; return the clipped stop distances, their kinds and one record per lid.
+
+    Each record keeps the clouds, hulls and tangent states of its pocket, so the step images can
+    be drawn without the flight code paying for them.
+    """
+    distances, kinds = rays["stop"].copy(), rays["kind"].copy()
+    records = []
+    for round_index in range(MAX_CLOSING_ROUNDS):
+        pockets, jumps = find_pockets(distances)
+        if not pockets:
+            break
+        stop_points = ray_points(rays["angles"], distances)
+        round_records = []
+        for pocket_index, (left_mouth, right_mouth) in enumerate(pockets):
+            left_mouth, left_run = pocket_side(distances, stop_points, jumps, left_mouth, True, distances[right_mouth])
+            right_mouth, right_run = pocket_side(distances, stop_points, jumps, right_mouth, False, distances[left_mouth])
+            left_cloud = obstacle_cloud(kinds, stop_points, left_mouth, left_run)
+            right_cloud = obstacle_cloud(kinds, stop_points, right_mouth, right_run)
+            if len(left_cloud) == 0 or len(right_cloud) == 0 or not is_unbounded(kinds, left_mouth, right_mouth):
+                continue
+            left_hull, right_hull = convex_hull(left_cloud), convex_hull(right_cloud)
+            # Start from the hull vertices closest to the pocket's mouths.
+            a = int(np.argmin(np.linalg.norm(left_hull - stop_points[left_mouth], axis=1)))
+            b = int(np.argmin(np.linalg.norm(right_hull - stop_points[right_mouth], axis=1)))
+            states = common_tangent(left_hull, right_hull, a, b)
+            round_records.append({
+                "round": round_index, "pocket": pocket_index, "left_cloud": left_cloud, "right_cloud": right_cloud,
+                "left_hull": left_hull, "right_hull": right_hull, "states": states,
+                "lid": (left_hull[states[-1]["a"]], right_hull[states[-1]["b"]]),
+            })
+
+        # Clipping only after every lid of the round is found keeps one pocket's lid from
+        # relabelling the rays that form the point cloud of the next pocket.
+        if not round_records:
+            break
+        for record in round_records:
+            clip_to_lid(rays["angles"], distances, kinds, *record["lid"])
+        records.extend(round_records)
+    return distances, kinds, records
+
+
 def draw_sweep_top(canvas: np.ndarray, to_canvas: np.ndarray, rays: dict, stops: np.ndarray, kinds: np.ndarray) -> np.ndarray:
     entries = ray_points(rays["angles"], rays["entry"])
     ends = ray_points(rays["angles"], stops)
@@ -369,6 +411,11 @@ def floor_to_grid() -> np.ndarray:
     """Return the transform from floor cm to a metric top-view grid covering every ray."""
     scale = 1.0 / GRID_CM_PER_PX
     return np.array([[scale, 0.0, MAX_RANGE_CM * scale], [0.0, -scale, MAX_RANGE_CM * scale], [0.0, 0.0, 1.0]])
+
+
+def free_polygon_from_drone(angles_deg: np.ndarray, distances: np.ndarray) -> np.ndarray:
+    """Return the free floor as a polygon that starts at the drone, so the blind zone is part of it."""
+    return np.vstack([np.zeros((1, 2)), ray_points(angles_deg, distances)])
 
 
 def drone_safe_area(free_polygon_cm: np.ndarray) -> np.ndarray:
@@ -543,64 +590,38 @@ def process(frame_name: str) -> None:
     write_image(out / "2_profile.jpg", draw_profile(rays, pockets, jumps))
 
     # Steps 3-4: point clouds on each side of every pocket, then their common tangent.
-    distances, kinds = rays["stop"].copy(), rays["kind"].copy()
-    lids = []
+    distances, kinds, records = close_pockets(rays)
     clouds_canvas, _ = floor_canvas(frame, floor_mask, image_to_floor, *full_view, 900)
-    for round_index in range(MAX_CLOSING_ROUNDS):
-        pockets, jumps = find_pockets(distances)
-        if not pockets:
-            break
-        stop_points = ray_points(rays["angles"], distances)
-        round_lids = []
-        for pocket_index, (left_mouth, right_mouth) in enumerate(pockets):
-            left_mouth, left_run = pocket_side(distances, stop_points, jumps, left_mouth, True, distances[right_mouth])
-            right_mouth, right_run = pocket_side(distances, stop_points, jumps, right_mouth, False, distances[left_mouth])
-            left_cloud = obstacle_cloud(kinds, stop_points, left_mouth, left_run)
-            right_cloud = obstacle_cloud(kinds, stop_points, right_mouth, right_run)
-            if len(left_cloud) == 0 or len(right_cloud) == 0 or not is_unbounded(kinds, left_mouth, right_mouth):
-                continue
-            left_hull, right_hull = convex_hull(left_cloud), convex_hull(right_cloud)
+    for record in records:
+        left_hull, right_hull = record["left_hull"], record["right_hull"]
+        if record["round"] == 0:
+            pocket_index = record["pocket"]
+            for cloud, hull, color_index in ((record["left_cloud"], left_hull, 2 * pocket_index), (record["right_cloud"], right_hull, 2 * pocket_index + 1)):
+                color = CLOUD_COLORS_BGR[color_index % len(CLOUD_COLORS_BGR)]
+                for point in to_px(to_canvas, cloud):
+                    cv2.circle(clouds_canvas, tuple(point), 3, color, -1)
+                cv2.polylines(clouds_canvas, [to_px(to_canvas, hull)], True, color, 2)
 
-            if round_index == 0:
-                for cloud, hull, color_index in ((left_cloud, left_hull, 2 * pocket_index), (right_cloud, right_hull, 2 * pocket_index + 1)):
-                    color = CLOUD_COLORS_BGR[color_index % len(CLOUD_COLORS_BGR)]
-                    for point in to_px(to_canvas, cloud):
-                        cv2.circle(clouds_canvas, tuple(point), 3, color, -1)
-                    cv2.polylines(clouds_canvas, [to_px(to_canvas, hull)], True, color, 2)
-
-            # Start from the hull vertices closest to the pocket's mouths.
-            a = int(np.argmin(np.linalg.norm(left_hull - stop_points[left_mouth], axis=1)))
-            b = int(np.argmin(np.linalg.norm(right_hull - stop_points[right_mouth], axis=1)))
-            states = common_tangent(left_hull, right_hull, a, b)
-            label = f"{round_index + 1}{chr(ord('a') + pocket_index)}"
-            for step, state in enumerate(states):
-                if state["violator"] is not None:
-                    title = f"pocket {label}, step {step}: {state['moving']} is not tangent (red vertex is on the camera side)"
-                else:
-                    length = np.linalg.norm(right_hull[state["b"]] - left_hull[state["a"]])
-                    title = f"pocket {label}, step {step}: a and b both tangent -> common tangent, {length:.0f} cm"
-                write_image(
-                    out / f"4_pocket{label}_step{step}.jpg",
-                    draw_tangent_state(frame, floor_mask, image_to_floor, left_hull, right_hull, left_cloud, right_cloud, state, title),
-                )
-
-            round_lids.append((left_hull[states[-1]["a"]], right_hull[states[-1]["b"]]))
-            print(f"{frame_name}: pocket {label} lid {np.linalg.norm(round_lids[-1][1] - round_lids[-1][0]):.0f} cm after {len(states) - 1} moves")
-
-        # Clipping only after every lid of the round is found keeps one pocket's lid from
-        # relabelling the rays that form the point cloud of the next pocket.
-        if not round_lids:
-            break
-        for start, end in round_lids:
-            clip_to_lid(rays["angles"], distances, kinds, start, end)
-        lids.extend(round_lids)
+        label = f"{record['round'] + 1}{chr(ord('a') + record['pocket'])}"
+        for step, state in enumerate(record["states"]):
+            if state["violator"] is not None:
+                title = f"pocket {label}, step {step}: {state['moving']} is not tangent (red vertex is on the camera side)"
+            else:
+                length = np.linalg.norm(right_hull[state["b"]] - left_hull[state["a"]])
+                title = f"pocket {label}, step {step}: a and b both tangent -> common tangent, {length:.0f} cm"
+            write_image(
+                out / f"4_pocket{label}_step{step}.jpg",
+                draw_tangent_state(frame, floor_mask, image_to_floor, left_hull, right_hull, record["left_cloud"], record["right_cloud"], state, title),
+            )
+        start, end = record["lid"]
+        print(f"{frame_name}: pocket {label} lid {np.linalg.norm(end - start):.0f} cm after {len(record['states']) - 1} moves")
     write_image(out / "3_clouds.jpg", clouds_canvas)
 
     # Step 5: free polygon from the near entry points and the clipped stop points.
     polygon_cm = np.vstack([ray_points(rays["angles"], rays["entry"]), ray_points(rays["angles"], distances)[::-1]])
     polygon_px = to_px(floor_to_image, polygon_cm)
     # A lid from an early round can end up behind a later one; only lids still bounding a ray are shown.
-    lids = [lid for lid in lids if bounds_a_ray(rays["angles"], distances, *lid)]
+    lids = [record["lid"] for record in records if bounds_a_ray(rays["angles"], distances, *record["lid"])]
     lids_px = [tuple(to_px(floor_to_image, np.vstack(lid))) for lid in lids]
     np.savez(out / "free_space.npz", polygon_cm=polygon_cm, polygon_px=polygon_px, angles_deg=rays["angles"], free_distance_cm=distances)
 
@@ -608,8 +629,8 @@ def process(frame_name: str) -> None:
     write_image(out / "5_free_top.jpg", draw_free_space_top(canvas, to_canvas, polygon_cm, lids))
     write_image(out / "5_free_photo.jpg", draw_free_space_photo(frame, polygon_px, lids_px))
 
-    # Step 6: the drone's size. The polygon starts at the drone so the blind zone is part of it.
-    free_polygon_cm = np.vstack([np.zeros((1, 2)), ray_points(rays["angles"], distances)])
+    # Step 6: the drone's size.
+    free_polygon_cm = free_polygon_from_drone(rays["angles"], distances)
     safe_area = drone_safe_area(free_polygon_cm)
     grid = free_grid(free_polygon_cm)
     examples = ray_points(rays["angles"], distances)[:: int(10 / SWEEP_STEP_DEG)]
