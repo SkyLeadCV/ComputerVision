@@ -434,9 +434,10 @@ def drone_safe_area(free_polygon_cm: np.ndarray) -> np.ndarray:
 def allowed_distances(safe_area: np.ndarray, angles_deg: np.ndarray, entry_cm: np.ndarray) -> np.ndarray:
     """Return how far the drone can fly straight along each heading.
 
-    The floor between the drone and the first visible floor (the blind zone) cannot be checked in
-    this frame; it is assumed clear because the drone was seeing it while approaching. From the
-    first visible point on, the whole path must stay inside the safe area.
+    The floor between the drone and the first visible floor (the blind zone) is not seen in this
+    frame, but nothing there can hit the drone: the camera sees the floor at the entry, and anything
+    reaching the drone's height would stand in that line of sight, so the ray would stop at its entry
+    and the heading would get no move. From the entry on, the whole path must stay inside the safe area.
     """
     distances = np.arange(0.0, MAX_RANGE_CM, GRID_CM_PER_PX)
     allowed = np.zeros(len(angles_deg))
