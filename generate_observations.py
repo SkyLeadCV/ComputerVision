@@ -12,8 +12,8 @@ import cv2
 import numpy as np
 
 from find_free_space import (
-    DRONE_RADIUS_CM, FREE_RAY_BGR, MAX_RANGE_CM, SAFETY_MARGIN_CM, STOP_COLORS_BGR, STOP_OBSTACLE, STOP_RANGE,
-    SWEEP_STEP_DEG,
+    DRONE_RADIUS_CM, FREE_RAY_BGR, MAX_RANGE_CM, SAFETY_MARGIN_CM, STEP_LIMIT_CM, STOP_COLORS_BGR, STOP_OBSTACLE,
+    STOP_RANGE, SWEEP_STEP_DEG,
 )
 from image_io import write_image
 
@@ -97,21 +97,28 @@ def observe(pose: dict) -> tuple[dict, list[int]]:
     # Same angular step and range as find_free_space.py, so Unity receives rays of the real density.
     half_rays = int(HFOV_DEG / 2 / SWEEP_STEP_DEG)
     rays = {"angle_deg": [], "entry_cm": [], "stop_cm": [], "kind": []}
+    hits = []
     for i in range(-half_rays, half_rays + 1):
         angle = i * SWEEP_STEP_DEG
         hit = ray_hit_cm(pose["x"], pose["y"], pose["yaw_deg"] + angle)
-        stop, kind = (hit, STOP_OBSTACLE) if hit < MAX_RANGE_CM else (MAX_RANGE_CM, STOP_RANGE)
+        entry = entry_cm(angle)
+        # The trusted range of docs/protocol.md: only the floor the next step will cross is excavated.
+        trusted = entry + STEP_LIMIT_CM
+        stop, kind = (hit, STOP_OBSTACLE) if hit <= trusted else (trusted, STOP_RANGE)
         rays["angle_deg"].append(angle)
-        rays["entry_cm"].append(round(min(entry_cm(angle), stop)))
+        rays["entry_cm"].append(round(min(entry, stop)))
         rays["stop_cm"].append(round(stop))
         rays["kind"].append(kind)
+        hits.append(hit)
 
+    # Victims are found by the person detector, not by the map's rays, so the trusted range does not apply:
+    # only real obstacles hide them, up to the range the pipeline measures.
     seen = []
     for victim_id, (vx, vy) in enumerate(VICTIMS, start=1):
         distance = math.hypot(vx - pose["x"], vy - pose["y"])
         angle = (math.degrees(math.atan2(vx - pose["x"], vy - pose["y"])) - pose["yaw_deg"] + 180) % 360 - 180
         ray = round(angle / SWEEP_STEP_DEG) + half_rays
-        if 0 <= ray < len(rays["angle_deg"]) and rays["entry_cm"][ray] < distance < rays["stop_cm"][ray]:
+        if 0 <= ray < len(hits) and rays["entry_cm"][ray] < distance < min(hits[ray], MAX_RANGE_CM):
             seen.append(victim_id)
     return rays, seen
 
