@@ -624,7 +624,10 @@ def process(frame_name: str) -> None:
     # A lid from an early round can end up behind a later one; only lids still bounding a ray are shown.
     lids = [record["lid"] for record in records if bounds_a_ray(rays["angles"], distances, *record["lid"])]
     lids_px = [tuple(to_px(floor_to_image, np.vstack(lid))) for lid in lids]
-    np.savez(out / "free_space.npz", polygon_cm=polygon_cm, polygon_px=polygon_px, angles_deg=rays["angles"], free_distance_cm=distances)
+    np.savez(
+        out / "free_space.npz", polygon_cm=polygon_cm, polygon_px=polygon_px, angles_deg=rays["angles"],
+        entry_cm=rays["entry"], free_distance_cm=distances, kind=kinds,
+    )
 
     canvas, to_canvas = floor_canvas(frame, floor_mask, image_to_floor, *full_view, 900)
     write_image(out / "5_free_top.jpg", draw_free_space_top(canvas, to_canvas, polygon_cm, lids))

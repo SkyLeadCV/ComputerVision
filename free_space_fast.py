@@ -30,7 +30,11 @@ CALIBRATION_FILE = Path("calibration/camera_calibration.npz")
 
 @dataclass(frozen=True)
 class FreeSpace:
-    """Rays in the units and order of the protocol's observation message, plus the chosen move."""
+    """Rays in the units and order of the protocol's observation message, plus the chosen move.
+
+    The rays run to the full sweep range, as the planner needs them. Whoever builds the observation
+    message cuts them at the trusted range of docs/protocol.md.
+    """
 
     angle_deg: np.ndarray
     entry_cm: np.ndarray
@@ -87,7 +91,9 @@ def main() -> None:
         with np.load(reference_dir / "free_space.npz") as free, np.load(reference_dir / "moves.npz") as moves:
             same = (
                 np.array_equal(free["angles_deg"], result.angle_deg)
+                and np.allclose(free["entry_cm"], result.entry_cm)
                 and np.allclose(free["free_distance_cm"], result.stop_cm)
+                and np.array_equal(free["kind"], result.kind)
                 and np.allclose(moves["allowed_cm"], result.allowed_cm)
             )
         if not same:
