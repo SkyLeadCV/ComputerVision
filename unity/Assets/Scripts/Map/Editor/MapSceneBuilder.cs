@@ -55,7 +55,8 @@ namespace SkyLead.Map.Editor
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = BackgroundColor;
             Bounds block = BlockBounds(map);
-            camera.transform.position = block.center + new Vector3(0f, 9f, -6f);
+            // Above and behind the take-off side, scaled with the block so any room size fills the view the same way.
+            camera.transform.position = block.center + new Vector3(0f, 1.8f, -1.2f) * Mathf.Max(block.extents.x, block.extents.z);
             camera.transform.LookAt(block.center);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
