@@ -137,9 +137,17 @@ def observe(pose: dict) -> tuple[dict, list[int]]:
         entry = entry_cm(angle)
         # The trusted range of docs/protocol.md: only the floor the next step will cross is excavated.
         trusted = entry + STEP_LIMIT_CM
-        stop, kind = (hit, STOP_OBSTACLE) if hit <= trusted else (trusted, STOP_RANGE)
+        if hit <= entry:
+            # A wall inside the blind zone hides the floor where it should start, so the real pipeline cannot
+            # measure how far it is and reports the stop at the entry (docs/protocol.md). Sending the true distance
+            # would hide that case from every replay.
+            stop, kind = entry, STOP_OBSTACLE
+        elif hit <= trusted:
+            stop, kind = hit, STOP_OBSTACLE
+        else:
+            stop, kind = trusted, STOP_RANGE
         rays["angle_deg"].append(angle)
-        rays["entry_cm"].append(round(min(entry, stop)))
+        rays["entry_cm"].append(round(entry))
         rays["stop_cm"].append(round(stop))
         rays["kind"].append(kind)
         hits.append(hit)
@@ -269,8 +277,9 @@ def draw_top_view(messages: list[dict], session: str) -> np.ndarray:
 
     for message in observations:
         pose, rays = message["pose"], message["rays"]
-        for angle, stop, kind in zip(rays["angle_deg"], rays["stop_cm"], rays["kind"]):
-            if kind == STOP_OBSTACLE:
+        for angle, entry, stop, kind in zip(rays["angle_deg"], rays["entry_cm"], rays["stop_cm"], rays["kind"]):
+            # A ray that saw no floor does not locate its obstacle, so it marks no face.
+            if kind == STOP_OBSTACLE and stop > entry:
                 dx, dy = direction(pose["yaw_deg"] + angle)
                 cv2.circle(image, to_px(pose["x"] + stop * dx, pose["y"] + stop * dy), 2, OBSTACLE_FACE_BGR, -1, cv2.LINE_AA)
 
