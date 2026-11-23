@@ -77,14 +77,18 @@ What one photo saw: the drone pose and the free-space rays from `find_free_space
 - `pose`: position and attitude when the photo was taken. `z` is the camera height above the floor.
 - `rays`: four lists of the same length, one item per ray, sorted by `angle_deg`. Distances are horizontal, on the floor, from the point under the camera.
   - `entry_cm`: where the visible floor starts. Closer than this is the camera's blind zone.
-  - `stop_cm`: where the free floor ends.
+  - `stop_cm`: where the free floor ends, cut at the trusted range.
   - `kind`: why the ray stopped.
+- **Trusted range:** the brain cuts every ray at `entry_cm + 200`, the blind zone plus one 2 m step (`STEP_LIMIT_CM` in `find_free_space.py`).
+  - That band is exactly the floor the drone will cross on its next step, and it is measured precisely: under 2 cm per image pixel at 3.5 m, against about 5 cm at 6 m.
+  - Farther floor is the least reliable (a wall of the floor's colour can pass for floor there), and excavation cannot be undone, so it is left solid until the drone sees it from closer.
+  - It is relative to each ray's `entry_cm`, not a fixed distance, because the blind zone changes with the camera's tilt: 1.1–1.9 m in the test video.
 
 | `kind` | Meaning | Unity |
 |---|---|---|
 | 0 | obstacle | Empty the air up to `stop_cm` and paint the voxels at the stop as a seen surface. |
 | 1 | image border (FOV) | Empty the air only. |
-| 2 | 6 m range limit | Empty the air only. |
+| 2 | trusted range (`entry_cm + 200`) | Empty the air only. |
 | 3 | pocket lid | Empty the air only. |
 
 ### `move`
