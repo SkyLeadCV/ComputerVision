@@ -56,6 +56,20 @@ namespace SkyLead.Map.Tests
         }
 
         [Test]
+        public void ARayThatSawNoFloorLeavesEveryVoxelSolid()
+        {
+            // A wall inside the blind zone: the photo shows it where the floor should start, so the pipeline
+            // reports stop_cm == entry_cm without knowing how far the wall really is.
+            VoxelGrid grid = NewGrid();
+            Excavator.Apply(grid, SingleRay(0f, 0f, 150f, 150f, RayKind.Obstacle), TelloFov);
+
+            for (int x = 0; x < grid.Size.x; x++)
+            for (int y = 0; y < grid.Size.y; y++)
+            for (int z = 0; z < grid.Size.z; z++)
+                Assert.AreEqual(Voxel.Solid, grid[x, y, z]);
+        }
+
+        [Test]
         public void TrustedRangeRayEmptiesAirWithoutPaintingASurface()
         {
             VoxelGrid grid = NewGrid();

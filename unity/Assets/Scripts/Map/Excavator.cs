@@ -19,11 +19,14 @@ namespace SkyLead.Map
             // Every ray is emptied before any surface is painted: a ray grazing a wall would otherwise
             // erase the surface that a neighbouring ray of the same photo has just found.
             for (int i = 0; i < rays.angle_deg.Length; i++)
-                EmptyAir(grid, pose, Direction(pose, rays.angle_deg[i]), rays.stop_cm[i], tanDown, tanUp);
+            {
+                if (SawFloor(rays, i))
+                    EmptyAir(grid, pose, Direction(pose, rays.angle_deg[i]), rays.stop_cm[i], tanDown, tanUp);
+            }
 
             for (int i = 0; i < rays.angle_deg.Length; i++)
             {
-                if (rays.kind[i] != RayKind.Obstacle)
+                if (rays.kind[i] != RayKind.Obstacle || !SawFloor(rays, i))
                     continue;
                 // The voxel just past the last free point is the obstacle's face. Obstacles are assumed to
                 // stand vertically on the floor (stixels), so the face runs from the floor to the top of the view.
@@ -34,6 +37,13 @@ namespace SkyLead.Map
                 SetColumn(grid, pose.x + distance * direction.x, pose.y + distance * direction.y, 0, top, Voxel.Surface);
             }
         }
+
+        /// <summary>
+        /// False for a ray whose photo showed an obstacle where the floor should start (stop_cm &lt;= entry_cm,
+        /// docs/protocol.md). Distances come from the floor, so such an obstacle stands somewhere inside the
+        /// blind zone at an unknown distance: the ray proves no air and locates no face.
+        /// </summary>
+        static bool SawFloor(Rays rays, int i) => rays.stop_cm[i] > rays.entry_cm[i];
 
         /// <summary>Unit floor direction of a ray: its heading is clockwise from +y, as yaw_deg is.</summary>
         static Vector2 Direction(Pose pose, float angleDeg)

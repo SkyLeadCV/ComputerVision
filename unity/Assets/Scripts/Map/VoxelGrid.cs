@@ -14,7 +14,7 @@ namespace SkyLead.Map
 
     /// <summary>
     /// The classroom as 10 cm voxels, indexed in the protocol frame: x right, y forward, z up, in cm
-    /// from the take-off point. One byte per voxel keeps the 240 000 voxels of a 10 x 8 x 3 m room in 240 kB.
+    /// from the take-off point. One byte per voxel keeps even a 10 x 8 x 3 m room (240 000 voxels) in 240 kB.
     /// </summary>
     public sealed class VoxelGrid
     {
