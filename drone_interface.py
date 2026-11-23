@@ -50,9 +50,13 @@ class DroneInterface(ABC):
 
     def send(self, command: str) -> str:
         """Send one SDK command and return the reply once the move has finished."""
+        # A take-off can time out and still happen, so the drone counts as flying from the moment
+        # it is asked to take off. Landing a drone that never left the ground only returns an error.
+        if command == "takeoff":
+            self.flying = True
         reply = self._send(command)
-        if reply == "ok" and command in ("takeoff", "land"):
-            self.flying = command == "takeoff"
+        if command == "land" and reply == "ok":
+            self.flying = False
         return reply
 
     def close(self) -> None:
@@ -91,7 +95,9 @@ class UnityDrone(DroneInterface):
         line = self.reader.readline()
         if not line:
             raise ConnectionError("The simulator closed the connection")
-        return line.decode("ascii").rstrip("\n")
+        # The contract ends lines with "\n", but a stray "\r" (C#'s WriteLine on Windows) must not turn
+        # "ok" into something else and stop close() from landing.
+        return line.decode("ascii").strip()
 
     def _send(self, command: str) -> str:
         return self._request(command)
