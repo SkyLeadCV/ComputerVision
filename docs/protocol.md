@@ -83,10 +83,14 @@ What one photo saw: the drone pose and the free-space rays from `find_free_space
   - That band is exactly the floor the drone will cross on its next step, and it is measured precisely: under 2 cm per image pixel at 3.5 m, against about 5 cm at 6 m.
   - Farther floor is the least reliable (a wall of the floor's colour can pass for floor there), and excavation cannot be undone, so it is left solid until the drone sees it from closer.
   - It is relative to each ray's `entry_cm`, not a fixed distance, because the blind zone changes with the camera's tilt: 1.1–1.9 m in the test video.
+- **A ray with `stop_cm <= entry_cm` saw no floor:** the photo shows an obstacle where the floor should start, so the obstacle stands somewhere inside the blind zone, at an unknown distance.
+  - Distances are measured on the floor (the homography), so with no floor in view there is nothing to measure. `find_free_space.py` reports such a ray as `stop_cm = entry_cm` with `kind` 0.
+  - The ray carries no free space and no obstacle position: Unity neither empties air nor paints a surface for it.
+  - It is common in narrow passages: both arms of the classroom (`docs/classroom.md`) are narrower than the blind zone.
 
 | `kind` | Meaning | Unity |
 |---|---|---|
-| 0 | obstacle | Empty the air up to `stop_cm` and paint the voxels at the stop as a seen surface. |
+| 0 | obstacle | Empty the air up to `stop_cm` and paint the voxels at the stop as a seen surface. Nothing at all when `stop_cm <= entry_cm`. |
 | 1 | image border (FOV) | Empty the air only. |
 | 2 | trusted range (`entry_cm + 200`) | Empty the air only. |
 | 3 | pocket lid | Empty the air only. |
