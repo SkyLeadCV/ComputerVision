@@ -464,6 +464,7 @@ class Explorer:
 
         Right only when a whole step is clear there, so a narrow gap does not wedge the drone against
         a wall; otherwise ahead, then left, each by the longest clear step and then the smallest turn.
+        A tie between equal turns to either side goes to the right, like the rest of the rule.
         """
         safe = self.grid.safe_area()
         reach = self.blind_zone_cm + STEP_LIMIT_CM
@@ -483,9 +484,9 @@ class Explorer:
                 if clear >= STEP_LIMIT_CM:
                     right.append((-new, relative, clear))
             elif relative < -SIDE_SECTOR_DEG:
-                left.append((-math.floor(clear / CELL_CM), abs(relative), relative, clear))
+                left.append((-math.floor(clear / CELL_CM), abs(relative), -relative, relative, clear))
             else:
-                ahead.append((-math.floor(clear / CELL_CM), abs(relative), relative, clear))
+                ahead.append((-math.floor(clear / CELL_CM), abs(relative), -relative, relative, clear))
         return [(r, c) for _, r, c in sorted(right)] + [(r, c) for *_, r, c in sorted(ahead)] + [(r, c) for *_, r, c in sorted(left)]
 
     def advance(self, centre_deg: float, options: list[tuple[float, float]]) -> bool:
