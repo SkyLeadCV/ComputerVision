@@ -55,8 +55,9 @@ NEW_AREA_RAY_STEP_DEG = 2.5
 # A safety cap: the measured classroom takes about 15 stops, so reaching this means the planner is looping.
 MAX_STOPS = 100
 MAX_CONFIRMATIONS = 3
-# Frontier targets this close to an earlier one are skipped, so a spot that never reveals anything is not revisited forever.
-FRONTIER_REVISIT_CM = 50.0
+# A move or frontier target ending within one 60 cm tile of an earlier stop is skipped: that spot was already
+# swept, and returning to it only makes the drone shuttle between two stops.
+REVISIT_CM = 60.0
 FRONTIER_HEADINGS_DEG = range(0, 360, 45)
 # The Tello needs some margin to land and to fly back; below this it returns to take-off at once.
 LOW_BATTERY_PCT = 20
@@ -216,7 +217,7 @@ class Grid:
         return len(self.unseen_in_view(position, heading_deg, reach_cm, half_fov_deg))
 
     def give_up(self, cells: set[tuple[int, int]]) -> None:
-        """Stop counting cells a stop looked at without resolving them as new floor.
+        """Stop counting cells a stop's photos covered without seeing them.
 
         With a 1-2 m blind zone, floor close to a wall in a narrow arm is never seen: from near, the
         wall hides it; from far, it lies beyond the trusted range. Left unknown, it would draw the
@@ -368,10 +369,10 @@ class SyntheticDrone(DroneInterface):
         # A flat floor seen from the flight height, as the simulator renders it with no pitch.
         entry = SYNTHETIC_HEIGHT_CM / math.tan(math.radians(self.fov["down_deg"])) / np.cos(np.radians(angles))
         in_range = hits < MAX_RANGE_CM
-        # stop_cm is the last free sample before the wall, as find_free_space.py reports it.
-        stop = np.where(in_range, np.maximum(np.floor(hits / RAY_STEP_CM) * RAY_STEP_CM - RAY_STEP_CM, 0.0), MAX_RANGE_CM)
+        # stop_cm is the last free sample before the wall, as find_free_space.py reports it. A wall inside
+        # the blind zone hides all floor, so the pipeline cannot measure it and reports stop_cm = entry_cm.
+        stop = np.where(in_range, np.maximum(np.floor(hits / RAY_STEP_CM) * RAY_STEP_CM - RAY_STEP_CM, entry), MAX_RANGE_CM)
         kind = np.where(in_range, STOP_OBSTACLE, STOP_RANGE)
-        entry = np.minimum(entry, stop)
         allowed = allowed_distances(drone_safe_area(free_polygon_from_drone(angles, stop)), angles, entry)
         return FreeSpace(angles, entry, stop, kind, allowed, "", SYNTHETIC_HEIGHT_CM)
 
@@ -396,7 +397,7 @@ class Explorer:
         self.yaw_deg = 0.0
         self.state = {}
         self.blind_zone_cm = STEP_LIMIT_CM
-        self.frontiers: list[np.ndarray] = []
+        self.stop_positions: list[np.ndarray] = []
         self.stops = 0
         OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -451,6 +452,9 @@ class Explorer:
         self.look()
         return centre
 
+    def revisits(self, point: np.ndarray) -> bool:
+        return any(np.linalg.norm(point - old) < REVISIT_CM for old in self.stop_positions)
+
     def sweep_half_fov(self) -> float:
         """Half the angle the three photos of a stop cover, which is what the next stop will see."""
         return SWEEP_TURN_DEG + (self.fov["left_deg"] + self.fov["right_deg"]) / 2
@@ -470,6 +474,8 @@ class Explorer:
             if clear < MIN_FORWARD_CM:
                 continue
             arrival = self.position + clear * direction(heading)
+            if self.revisits(arrival):
+                continue
             new = self.grid.new_cells(arrival, heading, reach, self.sweep_half_fov())
             if new < MIN_NEW_CELLS:
                 continue
@@ -532,7 +538,7 @@ class Explorer:
         spots.sort(key=lambda spot: np.linalg.norm(spot - self.position))
         start = tuple(int(v[0]) for v in self.grid.index(self.position)[:2])
         for spot in spots:
-            if any(np.linalg.norm(spot - old) < FRONTIER_REVISIT_CM for old in self.frontiers):
+            if self.revisits(spot):
                 continue
             best = max(FRONTIER_HEADINGS_DEG, key=lambda h: self.grid.new_cells(spot, h, reach, half_fov))
             if self.grid.new_cells(spot, best, reach, half_fov) < MIN_NEW_CELLS:
@@ -540,7 +546,6 @@ class Explorer:
             path = astar(self.grid.passable(safe, self.position), start, tuple(int(v[0]) for v in self.grid.index(spot)[:2]))
             if path is None:
                 continue
-            self.frontiers.append(spot)
             self.fly_path(path)
             self.turn(best - self.yaw_deg)
             return True
@@ -606,12 +611,10 @@ class Explorer:
                 reason = "low_battery"
                 break
             self.stops += 1
-            # Everything unresolved within reach, all around: a stop that resolves less than a tile of it
-            # is in a dead end, and coming back from another side would not do better.
-            around = self.grid.unseen_in_view(self.position, 0.0, self.blind_zone_cm + STEP_LIMIT_CM, 180.0)
+            self.stop_positions.append(self.position.copy())
             centre = self.sweep()
-            if sum(self.grid.cells[cell] != UNKNOWN for cell in around) < MIN_NEW_CELLS:
-                self.grid.give_up(around)
+            # The three photos just covered these cells within reach and still could not see them.
+            self.grid.give_up(self.grid.unseen_in_view(self.position, centre, self.blind_zone_cm + STEP_LIMIT_CM, self.sweep_half_fov()))
             options = self.candidates(centre)
             if not options:
                 # A dead end: look behind before deciding there is nothing left here.
