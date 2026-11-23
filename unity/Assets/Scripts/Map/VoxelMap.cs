@@ -7,12 +7,14 @@ namespace SkyLead.Map
     public sealed class VoxelMap : MonoBehaviour
     {
         // The measured classroom of docs/classroom.md: 460 x 560 cm with a 300 cm ceiling, and the take-off pad at
-        // room (60, 60), so in the protocol frame the room runs from (-60, -60) to (400, 500).
+        // room (60, 60), so in the protocol frame the room runs from (-60, -60) to (400, 500). The block keeps one
+        // voxel beyond each wall: a wall's face is painted in the voxel just behind the ray's stop, which would
+        // otherwise fall outside the grid and leave the room's walls undrawn.
         [Tooltip("Corner of the block with the lowest x and y, in cm from the take-off point (protocol frame).")]
-        [SerializeField] Vector2 originCm = new(-60f, -60f);
+        [SerializeField] Vector2 originCm = new(-70f, -70f);
 
         [Tooltip("Block size in 10 cm voxels along x (right), y (forward) and z (up).")]
-        [SerializeField] Vector3Int sizeVoxels = new(46, 56, 30);
+        [SerializeField] Vector3Int sizeVoxels = new(48, 58, 30);
 
         [Tooltip("Only what lies below this height is drawn, like a cut-away scale model. It changes no data.")]
         // Above the drone's 80 cm and the tables, so obstacles still show at the height that matters for flying.
