@@ -2,7 +2,9 @@
     "name": "SkyLead.Map.Editor",
     "rootNamespace": "SkyLead.Map.Editor",
     "references": [
-        "SkyLead.Map"
+        "SkyLead.Map",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
     ],
     "includePlatforms": [
         "Editor"
