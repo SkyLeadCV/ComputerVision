@@ -43,6 +43,9 @@ class FreeSpace:
     allowed_cm: np.ndarray
     command: str
     camera_height_cm: float
+    # The floor's normal in camera coordinates. With camera_height_cm it places any pixel on the floor, also in
+    # another photo taken from the same spot, since turning on the spot changes neither.
+    floor_normal: np.ndarray
 
 
 def analyze_frame(frame: np.ndarray, camera_matrix: np.ndarray) -> FreeSpace | None:
@@ -69,7 +72,8 @@ def analyze_frame(frame: np.ndarray, camera_matrix: np.ndarray) -> FreeSpace | N
     safe_area = drone_safe_area(free_polygon_from_drone(rays["angles"], stops))
     allowed = allowed_distances(safe_area, rays["angles"], rays["entry"])
     return FreeSpace(
-        rays["angles"], rays["entry"], stops, kinds, allowed, tello_command(rays["angles"], allowed), camera_height
+        rays["angles"], rays["entry"], stops, kinds, allowed, tello_command(rays["angles"], allowed), camera_height,
+        axes[0],
     )
 
 

@@ -25,6 +25,7 @@ def test_trusted_rays_cut_at_entry_plus_one_step():
         allowed_cm=np.zeros(3),
         command="",
         camera_height_cm=80.0,
+        floor_normal=np.array([0.0, 1.0, 0.0]),
     )
     rays = explorer.trusted_rays(free_space)
     assert rays["stop_cm"].tolist() == [250, 300, 300]

@@ -374,7 +374,8 @@ class SyntheticDrone(DroneInterface):
         stop = np.where(in_range, np.maximum(np.floor(hits / RAY_STEP_CM) * RAY_STEP_CM - RAY_STEP_CM, entry), MAX_RANGE_CM)
         kind = np.where(in_range, STOP_OBSTACLE, STOP_RANGE)
         allowed = allowed_distances(drone_safe_area(free_polygon_from_drone(angles, stop)), angles, entry)
-        return FreeSpace(angles, entry, stop, kind, allowed, "", SYNTHETIC_HEIGHT_CM)
+        # A level camera: the floor is straight down, the image's y axis.
+        return FreeSpace(angles, entry, stop, kind, allowed, "", SYNTHETIC_HEIGHT_CM, np.array([0.0, 1.0, 0.0]))
 
     def take_photo(self) -> np.ndarray:
         raise NotImplementedError("The synthetic drone sees by casting rays; use see()")
