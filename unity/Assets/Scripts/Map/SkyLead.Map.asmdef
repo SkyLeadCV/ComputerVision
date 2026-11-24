@@ -1,7 +1,9 @@
 {
     "name": "SkyLead.Map",
     "rootNamespace": "SkyLead.Map",
-    "references": [],
+    "references": [
+        "Unity.InputSystem"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

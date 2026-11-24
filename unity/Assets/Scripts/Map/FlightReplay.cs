@@ -7,8 +7,6 @@ namespace SkyLead.Map
     /// <summary>Plays a recorded flight (flights/*.jsonl) into the map, keeping the messages' real timing.</summary>
     public sealed class FlightReplay : MonoBehaviour
     {
-        [SerializeField] VoxelMap map;
-
         [Tooltip("A .jsonl flight recording. Empty plays the newest file in the repository's flights/ folder.")]
         [SerializeField] string flightPath = "";
 
@@ -19,47 +17,60 @@ namespace SkyLead.Map
         int next;
         float clock;
 
+        /// <summary>The recording being replayed, or null when none was loaded.</summary>
+        public string FileName { get; private set; }
+
         public void Load(string path)
         {
-            lines = File.ReadAllLines(ResolvePath(path)).Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+            string resolved = ResolvePath(path);
+            lines = File.ReadAllLines(resolved).Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
             next = 0;
             clock = 0f;
+            FileName = Path.GetFileName(resolved);
+        }
+
+        /// <summary>Load the configured recording; without one the map simply keeps waiting for a live brain.</summary>
+        public bool TryLoad()
+        {
+            try
+            {
+                Load(flightPath);
+                return true;
+            }
+            catch (IOException error)
+            {
+                Debug.LogWarning(error.Message);
+                return false;
+            }
+        }
+
+        public void Stop()
+        {
+            lines = null;
+            FileName = null;
         }
 
         /// <summary>Deliver every remaining message at once, for checks that do not need the timing.</summary>
         public void PlayAll() => Advance(float.PositiveInfinity);
 
-        void Start() => Load(flightPath);
-
         void Update()
         {
+            if (lines == null)
+                return;
             clock += Time.deltaTime * speed;
             Advance(clock);
         }
 
         void Advance(float untilT)
         {
+            var receiver = GetComponent<MapReceiver>();
             while (lines != null && next < lines.Length)
             {
                 var header = JsonUtility.FromJson<MessageHeader>(lines[next]);
                 if (header.t > untilT)
                     return;
-                Dispatch(header.type, lines[next]);
+                receiver.Receive(lines[next]);
                 next++;
-            }
-        }
-
-        void Dispatch(string type, string line)
-        {
-            // move, victim, state and session_end are drawn by the trail, markers and status of feature 019.
-            switch (type)
-            {
-                case "session_start":
-                    map.StartSession(JsonUtility.FromJson<SessionStart>(line));
-                    break;
-                case "observation":
-                    map.Observe(JsonUtility.FromJson<Observation>(line));
-                    break;
             }
         }
 

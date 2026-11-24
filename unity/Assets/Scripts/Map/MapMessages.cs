@@ -58,6 +58,45 @@ namespace SkyLead.Map
         public Rays rays;
     }
 
+    [Serializable]
+    public class PlanarPose
+    {
+        public float x;
+        public float y;
+        public float yaw_deg;
+    }
+
+    [Serializable]
+    public class Move : MessageHeader
+    {
+        public string command;
+        // "from" is a C# keyword; the @ only escapes it, so JsonUtility still sees the field name "from".
+        public PlanarPose @from;
+        public PlanarPose to;
+    }
+
+    [Serializable]
+    public class Victim : MessageHeader
+    {
+        public int id;
+        public float x;
+        public float y;
+        public float confidence;
+    }
+
+    [Serializable]
+    public class MissionState : MessageHeader
+    {
+        public string mode;
+        public float person_distance_cm;
+    }
+
+    [Serializable]
+    public class SessionEnd : MessageHeader
+    {
+        public string reason;
+    }
+
     public static class RayKind
     {
         public const int Obstacle = 0;
