@@ -106,6 +106,9 @@ class FakeTello:
         return SimpleNamespace(frame=frame)
 
     def send_command_with_return(self, command, timeout):
+        # djitellopy type-checks its arguments and rejects a float timeout, which the first flight hit.
+        if not isinstance(timeout, int):
+            raise TypeError(f"timeout must be an int, got {type(timeout).__name__}")
         self.sent.append(command)
         return self.replies.get(command, "ok")
 

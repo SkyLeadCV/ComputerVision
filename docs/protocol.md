@@ -22,7 +22,7 @@ This protocol is only for the map. Between the brain and the drone there is no J
 - Origin: the take-off point, on the floor.
 - Axes, fixed at take-off: **x** to the right, **y** forward, **z** up.
 - `yaw_deg`: heading, 0 = the take-off heading, **positive clockwise** seen from above (same sign as the `cw` command).
-- `pitch_deg`: camera pitch, **positive nose up**.
+- `pitch_deg`: camera pitch, **positive nose up**. The Tello's camera looks 11° down from its body (`docs/simulator.md`), so it is the drone's own pitch minus 11: about −11 in level flight.
 - Ray angles: relative to the drone's heading, **positive to the right**.
 - A ray at `angle_deg` from a drone at (`x`, `y`, `yaw_deg`) points along `h = yaw_deg + angle_deg`, and the floor point at distance `d` is:
 
@@ -137,7 +137,12 @@ The current phase of the mission.
 {"type": "session_end", "seq": 77, "t": 402.9, "reason": "back_at_start"}
 ```
 
-- `reason`: `back_at_start`, `low_battery`, `user_stop`.
+- `reason`:
+  - `back_at_start`: the mission finished and the drone flew back to take-off;
+  - `low_battery`: the battery ran low and the drone flew back to take-off;
+  - `no_path_home`: no path back to take-off was found, so the drone landed where it was;
+  - `user_stop`: stopped by hand on the brain (Ctrl+C);
+  - `error`: a command failed or the brain crashed; the drone landed where it was.
 
 ## 5. Reading the messages in C#
 

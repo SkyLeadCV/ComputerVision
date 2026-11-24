@@ -28,15 +28,27 @@ namespace SkyLead.Map
         readonly List<Vector3Int> dirtyChunks = new();
         readonly ChunkMeshData meshData = new();
         CameraFov fov;
+        string sessionName;
         bool warnedNoSession;
 
         public VoxelGrid Grid { get; private set; }
 
-        public void StartSession(SessionStart session)
+        public Vector2 OriginCm => originCm;
+
+        public Vector3Int SizeVoxels => sizeVoxels;
+
+        /// <summary>Clear the block for a new session; the same session continues it. Returns whether it was new.</summary>
+        public bool StartSession(SessionStart session)
         {
             EnsureGrid();
-            Grid.Clear();
             fov = session.camera;
+            // The brain re-sends session_start after every reconnection (docs/protocol.md), and excavation cannot be
+            // redone from the lost messages, so only a different session may clear what was carved.
+            if (session.session == sessionName)
+                return false;
+            sessionName = session.session;
+            Grid.Clear();
+            return true;
         }
 
         public void Observe(Observation observation)

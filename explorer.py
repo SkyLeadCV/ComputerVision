@@ -68,6 +68,9 @@ SYNTHETIC_YAW_SPEED_DEG_S = 90.0
 SYNTHETIC_PHOTO_TIME_S = 1.0
 # The simulator's take-off height (docs/simulator.md).
 SYNTHETIC_HEIGHT_CM = 80.0
+# The Tello's camera looks down this much in flight (measured on the tiles in the first flight's photo), which
+# brings the blind zone to about 1.25 m instead of the 2 m of a level camera.
+SYNTHETIC_CAMERA_TILT_DEG = 11.0
 # docs/classroom.md: free floor of the measured classroom and the take-off pad, in the room frame.
 CLASSROOM_FLOOR_CM = [(0, 0), (120, 0), (120, 310), (370, 310), (370, 0), (460, 0), (460, 560), (0, 560)]
 CLASSROOM_TAKEOFF_CM = (60, 60)
@@ -366,8 +369,9 @@ class SyntheticDrone(DroneInterface):
             s = (offset[..., 0] * units[:, None, 1] - offset[..., 1] * units[:, None, 0]) / denominator
         hits = np.where((np.abs(denominator) > 1e-9) & (t > 0) & (s >= 0) & (s <= 1), t, np.inf).min(axis=1)
 
-        # A flat floor seen from the flight height, as the simulator renders it with no pitch.
-        entry = SYNTHETIC_HEIGHT_CM / math.tan(math.radians(self.fov["down_deg"])) / np.cos(np.radians(angles))
+        # A flat floor seen from the flight height through the tilted camera.
+        lowest_view = math.radians(self.fov["down_deg"] + SYNTHETIC_CAMERA_TILT_DEG)
+        entry = SYNTHETIC_HEIGHT_CM / math.tan(lowest_view) / np.cos(np.radians(angles))
         in_range = hits < MAX_RANGE_CM
         # stop_cm is the last free sample before the wall, as find_free_space.py reports it. A wall inside
         # the blind zone hides all floor, so the pipeline cannot measure it and reports stop_cm = entry_cm.
@@ -600,6 +604,19 @@ class Explorer:
                   "vfov_up_deg": round(self.fov["up_deg"], 1), "vfov_down_deg": round(self.fov["down_deg"], 1)}
         self.map.send("session_start", self.clock(), version=1, session=session, camera=camera,
                       drone_radius_cm=DRONE_RADIUS_CM, safety_margin_cm=SAFETY_MARGIN_CM)
+        # Every way out of the mission closes the session, so the recording and the map never miss its end.
+        reason = "error"
+        try:
+            reason, outcome = self.fly()
+            return f"{reason}, {outcome}"
+        except KeyboardInterrupt:
+            reason = "user_stop"
+            raise
+        finally:
+            self.map.send("session_end", self.clock(), reason=reason)
+
+    def fly(self) -> tuple[str, str]:
+        """Take off, explore until nothing reachable is left or the battery runs low, and fly back to take-off."""
         self.map.send("state", self.clock(), mode="exploring", person_distance_cm=-1.0)
         for command in ("command", "streamon", "takeoff"):
             reply = self.drone.send(command)
@@ -631,10 +648,12 @@ class Explorer:
                 break
 
         home = self.return_home()
-        outcome = "no path home" if home is None else f"{home:.0f} cm from take-off"
+        if home is None:
+            reason, outcome = "no_path_home", "no path home"
+        else:
+            outcome = f"{home:.0f} cm from take-off"
         write_image(OUTPUT_DIR / "2_final.png", self.draw(f"final: {self.stops} stops, {outcome}"))
-        self.map.send("session_end", self.clock(), reason=reason)
-        return f"{reason}, {outcome}"
+        return reason, outcome
 
 
 def main() -> None:

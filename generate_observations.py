@@ -40,6 +40,9 @@ ROUTE = [
 HFOV_DEG = 54.5
 VFOV_UP_DEG = 20.4
 VFOV_DOWN_DEG = 22.1
+# The Tello's camera looks this far down from its body in flight (docs/simulator.md), which brings the blind zone
+# to about 1.25 m instead of the 2 m of a level camera.
+CAMERA_TILT_DEG = 11.0
 # The height of the hand-held test video (median 79.7 cm), which the real flight will keep.
 FLIGHT_HEIGHT_CM = 80.0
 # A plausible YOLO score; Unity only displays it.
@@ -122,7 +125,7 @@ def on_free_floor(x: float, y: float) -> bool:
 
 def entry_cm(angle_deg: float) -> float:
     """Start of the visible floor along a ray: the lowest image row meets the floor at a fixed forward distance."""
-    forward_cm = FLIGHT_HEIGHT_CM / math.tan(math.radians(VFOV_DOWN_DEG))
+    forward_cm = FLIGHT_HEIGHT_CM / math.tan(math.radians(VFOV_DOWN_DEG + CAMERA_TILT_DEG))
     return forward_cm / math.cos(math.radians(angle_deg))
 
 
@@ -200,7 +203,7 @@ def generate(session: str) -> list[dict]:
 
     def emit_observation(pose: dict) -> None:
         rays, seen = observe(pose)
-        emit("observation", pose={**pose, "z": FLIGHT_HEIGHT_CM, "pitch_deg": 0.0}, rays=rays)
+        emit("observation", pose={**pose, "z": FLIGHT_HEIGHT_CM, "pitch_deg": -CAMERA_TILT_DEG}, rays=rays)
         for victim_id in seen:
             vx, vy = VICTIMS[victim_id - 1]
             emit("victim", id=victim_id, x=float(vx), y=float(vy), confidence=VICTIM_CONFIDENCE)
