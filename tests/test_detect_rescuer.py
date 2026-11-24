@@ -11,14 +11,14 @@ def test_a_face_box_twice_as_wide_is_half_as_far(camera_matrix):
 
 
 def test_the_nearest_face_is_the_rescuer(camera_matrix, monkeypatch):
-    # A false face on a hoodie, then the real one: the widest box wins wherever it comes in the list.
-    faces = np.array([[233, 410, 76, 76], [315, 74, 102, 102]])
+    # A small false face beside the real one, as in one of the face photos: the widest box wins wherever it comes.
+    faces = np.array([[742, 74, 81, 81], [270, 76, 207, 207]])
     monkeypatch.setattr(detect_rescuer, "detect_faces", lambda photo: faces)
 
     rescuer = detect_rescuer.find_rescuer(np.zeros((720, 960, 3), np.uint8), camera_matrix)
 
-    assert rescuer.box == (315, 74, 102, 102)
-    assert rescuer.distance_cm == pytest.approx(detect_rescuer.face_distance_cm(102, camera_matrix))
+    assert rescuer.box == (270, 76, 207, 207)
+    assert rescuer.distance_cm == pytest.approx(detect_rescuer.face_distance_cm(207, camera_matrix))
 
 
 def test_no_face_on_an_empty_floor(camera_matrix):

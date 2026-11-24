@@ -32,7 +32,8 @@ FACE_BOX_WIDTH_CM = 21.6
 
 # Each pass of the detector grows the window by 10 %, so a face is matched within 5 % of its size.
 SCALE_FACTOR = 1.1
-# Overlapping hits needed to accept a face; OpenCV's usual value, which kept false faces out of the photos.
+# Overlapping hits needed to accept a face; OpenCV's usual value. It still let one small false face through in
+# the 31 face photos, next to the real one, which find_rescuer() drops by keeping the widest box.
 MIN_NEIGHBORS = 5
 # The box of a face 4 m away, beyond the 3 m at which the guide waits for the rescuer.
 MIN_FACE_PX = 50
