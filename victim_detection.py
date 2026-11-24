@@ -14,7 +14,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from free_space_fast import CALIBRATION_FILE, analyze_frame
 from image_io import list_images, read_image, write_image
@@ -57,6 +56,9 @@ class Person:
 
 class VictimDetector:
     def __init__(self, camera_matrix: np.ndarray) -> None:
+        # Imported here: PyTorch takes seconds to load, and the synthetic flight and the geometry need none of it.
+        from ultralytics import YOLO
+
         self.model = YOLO(MODEL_FILE)
         self.inverse_camera_matrix = np.linalg.inv(camera_matrix)
 
@@ -70,6 +72,10 @@ class VictimDetector:
 
     def place(self, person: Person, frame_height: int, floor_normal: np.ndarray, camera_height_cm: float) -> Victim | None:
         return place(person, frame_height, self.inverse_camera_matrix, floor_normal, camera_height_cm)
+
+    def find_victims(self, frame: np.ndarray, floor_normal: np.ndarray, camera_height_cm: float) -> list[Victim]:
+        victims = (self.place(person, frame.shape[0], floor_normal, camera_height_cm) for person in self.find_people(frame))
+        return [victim for victim in victims if victim is not None]
 
 
 def place(person: Person, frame_height: int, inverse_camera_matrix: np.ndarray, floor_normal: np.ndarray,

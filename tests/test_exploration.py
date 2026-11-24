@@ -5,8 +5,8 @@ import pytest
 
 import explorer
 
-# The assumed pad and four others spread over the arms and the top band of docs/classroom.md.
-TAKEOFFS_CM = [(60, 60), (415, 60), (230, 430), (60, 480), (400, 500)]
+# The pad and four others spread over the arms and the top band of docs/classroom.md, clear of the victim.
+TAKEOFFS_CM = [(60, 60), (415, 60), (230, 430), (60, 480), (420, 380)]
 
 
 def synthetic_mission(camera_matrix, monkeypatch, takeoff_cm=(60, 60)):
@@ -31,7 +31,8 @@ def test_synthetic_exploration_comes_back_home(takeoff_cm, camera_matrix, output
     result = exploration.run("test")
 
     assert result.startswith("back_at_start")
-    assert np.linalg.norm(drone.position) < 10
+    # The Tello cannot fly a shorter leg, so the last one is skipped when the pad is closer than that.
+    assert np.linalg.norm(drone.position) < explorer.MIN_FORWARD_CM
     assert exploration.stops <= 20
 
     messages = recorded_messages(map_link)
@@ -40,6 +41,12 @@ def test_synthetic_exploration_comes_back_home(takeoff_cm, camera_matrix, output
     assert times == sorted(times)
     assert messages[-1]["type"] == "session_end"
     assert messages[-1]["reason"] == "back_at_start"
+    # The one victim of the classroom, found and placed on its body (its nearest point is at most half a body away).
+    victims = [message for message in messages if message["type"] == "victim"]
+    assert victims and {victim["id"] for victim in victims} == {1}
+    (centre, _), = explorer.CLASSROOM_VICTIMS
+    body_centre = np.array(centre) - takeoff_cm
+    assert np.linalg.norm([victims[-1]["x"], victims[-1]["y"]] - body_centre) <= explorer.VICTIM_BODY_CM[0] / 2 + 10
     for message in messages:
         if message["type"] == "observation":
             rays = message["rays"]
