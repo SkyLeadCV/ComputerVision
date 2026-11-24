@@ -23,8 +23,9 @@ CALIBRATION_FILE = Path("calibration/camera_calibration.npz")
 OUTPUT_DIR = Path("photos")
 
 # The simulator contract's limit, also used for the real drone: djitellopy's 7 s default is too
-# short for a slow take-off, which djitellopy itself gives 20 s.
-REPLY_TIMEOUT_S = 20.0
+# short for a slow take-off, which djitellopy itself gives 20 s. An int, because djitellopy's
+# type check rejects a float timeout.
+REPLY_TIMEOUT_S = 20
 SIMULATOR_PORT = 5006
 FRAME_SHAPE = (720, 960)
 # The H.264 stream lags behind the camera, so a frame grabbed right after "ok" can still show the move.
