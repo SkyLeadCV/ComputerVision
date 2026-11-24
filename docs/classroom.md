@@ -59,7 +59,7 @@ Free floor polygon, counter-clockwise:
 ## 4. Take-off pad
 
 - At **(60, 60)**, heading **+y** (up the left arm).
-- **Assumed, not measured:** the centre of the left arm and one 60 cm floor tile from the bottom wall. Move it here if the real pad differs.
+- Confirmed on site on 2026-11-24: the centre of the left arm and one 60 cm floor tile from the bottom wall.
 
 ## 5. From the map frame to the room frame
 
@@ -75,6 +75,4 @@ point (`x`, `y`) of `docs/protocol.md` is at room (`x + 60`, `y + 60`), and `yaw
 
 ## 7. Not measured yet
 
-- Exact take-off pad (section 4).
 - Height of the green-grey strip at the base of the walls, and where the coloured tape that separates it from the floor is placed.
-- Position of the door and the interior window.
