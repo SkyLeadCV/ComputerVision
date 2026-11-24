@@ -599,6 +599,19 @@ class Explorer:
                   "vfov_up_deg": round(self.fov["up_deg"], 1), "vfov_down_deg": round(self.fov["down_deg"], 1)}
         self.map.send("session_start", self.clock(), version=1, session=session, camera=camera,
                       drone_radius_cm=DRONE_RADIUS_CM, safety_margin_cm=SAFETY_MARGIN_CM)
+        # Every way out of the mission closes the session, so the recording and the map never miss its end.
+        reason = "error"
+        try:
+            reason, outcome = self.fly()
+            return f"{reason}, {outcome}"
+        except KeyboardInterrupt:
+            reason = "user_stop"
+            raise
+        finally:
+            self.map.send("session_end", self.clock(), reason=reason)
+
+    def fly(self) -> tuple[str, str]:
+        """Take off, explore until nothing reachable is left or the battery runs low, and fly back to take-off."""
         self.map.send("state", self.clock(), mode="exploring", person_distance_cm=-1.0)
         for command in ("command", "streamon", "takeoff"):
             reply = self.drone.send(command)
@@ -630,10 +643,12 @@ class Explorer:
                 break
 
         home = self.return_home()
-        outcome = "no path home" if home is None else f"{home:.0f} cm from take-off"
+        if home is None:
+            reason, outcome = "no_path_home", "no path home"
+        else:
+            outcome = f"{home:.0f} cm from take-off"
         write_image(OUTPUT_DIR / "2_final.png", self.draw(f"final: {self.stops} stops, {outcome}"))
-        self.map.send("session_end", self.clock(), reason=reason)
-        return f"{reason}, {outcome}"
+        return reason, outcome
 
 
 def main() -> None:

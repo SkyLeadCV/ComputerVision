@@ -137,7 +137,12 @@ The current phase of the mission.
 {"type": "session_end", "seq": 77, "t": 402.9, "reason": "back_at_start"}
 ```
 
-- `reason`: `back_at_start`, `low_battery`, `user_stop`.
+- `reason`:
+  - `back_at_start`: the mission finished and the drone flew back to take-off;
+  - `low_battery`: the battery ran low and the drone flew back to take-off;
+  - `no_path_home`: no path back to take-off was found, so the drone landed where it was;
+  - `user_stop`: stopped by hand on the brain (Ctrl+C);
+  - `error`: a command failed or the brain crashed; the drone landed where it was.
 
 ## 5. Reading the messages in C#
 
