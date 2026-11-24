@@ -73,28 +73,33 @@ namespace SkyLead.Simulator.Tests
             Assert.AreEqual(500f, FlightDistanceCm(pad, 0f), 0.5f, "forward to the top wall");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 90f), 0.5f, "right to the tables block");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 270f), 0.5f, "left to the wall");
-            Assert.AreEqual(60f, FlightDistanceCm(pad, 180f), 0.5f, "back to the wall");
+            // The rescuer waits right behind the pad, before the wall.
+            Assert.Less(FlightDistanceCm(pad, 180f), 59f, "back into the rescuer");
             // The right arm's lane: from its middle, up the arm and past the tables into the top band.
             Assert.AreEqual(559.5f, FlightDistanceCm(new Vector2(415f, 0.5f), 0f), 0.5f, "up the right arm");
         }
 
         [Test]
-        public void TheDroneFliesOverLyingVictimsButNotIntoTheRescuer()
+        public void TheDroneFliesOverTheLyingVictim()
         {
             room = ClassroomBuilder.Build(default);
             Physics.SyncTransforms();
+            Vector2 victim = ClassroomLayout.Victim.PositionCm;
 
-            foreach (PersonPlacement victim in ClassroomLayout.Victims)
-            {
-                Vector2 below = victim.PositionCm - new Vector2(0f, 100f);
-                Assert.AreEqual(ClassroomLayout.DepthCm - below.y, FlightDistanceCm(below, 0f), 0.5f, "over a victim");
-                Assert.IsTrue(Physics.Raycast(ClassroomLayout.ToUnity(victim.PositionCm.x, victim.PositionCm.y, FlightHeightCm), Vector3.down, out RaycastHit hit));
-                Assert.That(hit.collider.transform.parent.name, Does.StartWith("Victim"));
-            }
+            Vector2 below = victim - new Vector2(0f, 100f);
+            Assert.AreEqual(ClassroomLayout.DepthCm - below.y, FlightDistanceCm(below, 0f), 0.5f, "over the victim");
+            Assert.IsTrue(Physics.Raycast(ClassroomLayout.ToUnity(victim.x, victim.y, FlightHeightCm), Vector3.down, out RaycastHit hit));
+            Assert.AreEqual("Victim", PersonOf(hit.collider.transform).name);
+            Assert.Less(hit.point.y * 100f, 30f, "lying low");
+        }
 
-            Vector2 rescuer = ClassroomLayout.Rescuer.PositionCm;
-            Vector2 start = new(rescuer.x, rescuer.y - 200f);
-            Assert.Less(FlightDistanceCm(start, 0f), 200f, "into the rescuer");
+        [Test]
+        public void TheRescuerWaitsBehindTheTakeOffPad()
+        {
+            room = ClassroomBuilder.Build(default);
+            float padY = ClassroomLayout.TakeOffPadCm.y;
+            foreach (Renderer part in room.transform.Find("Rescuer").GetComponentsInChildren<Renderer>())
+                Assert.Less(part.bounds.max.z * 100f, padY, $"{part.name} behind the drone, out of the camera's view");
         }
 
         [Test]
@@ -103,9 +108,9 @@ namespace SkyLead.Simulator.Tests
             room = ClassroomBuilder.Build(default);
             foreach (Renderer part in room.GetComponentsInChildren<Renderer>())
             {
-                Transform person = part.transform.parent;
-                if (person == room.transform)
+                if (part.transform.parent == room.transform)
                     continue;
+                Transform person = PersonOf(part.transform);
                 Bounds bounds = part.bounds;
                 Vector2 minCm = new Vector2(bounds.min.x, bounds.min.z) * 100f, maxCm = new Vector2(bounds.max.x, bounds.max.z) * 100f;
                 Assert.IsTrue(minCm.x >= 0f && minCm.y >= 0f && maxCm.x <= ClassroomLayout.WidthCm && maxCm.y <= ClassroomLayout.DepthCm,
@@ -114,6 +119,14 @@ namespace SkyLead.Simulator.Tests
                     && minCm.y < ClassroomLayout.TablesMaxCm.y && maxCm.y > ClassroomLayout.TablesMinCm.y;
                 Assert.IsFalse(overTables, $"{person.name} {part.name} clear of the tables block");
             }
+        }
+
+        /// <summary>The person a body part belongs to: the classroom's child above it.</summary>
+        Transform PersonOf(Transform part)
+        {
+            while (part.parent != room.transform)
+                part = part.parent;
+            return part;
         }
 
         /// <summary>How far the drone flies at flight height from a room point along a heading before it hits something.</summary>

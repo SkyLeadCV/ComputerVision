@@ -30,8 +30,10 @@ namespace SkyLead.Simulator.Editor
         static readonly Color WallColor = new(0.92f, 0.92f, 0.92f);
         static readonly Color TablesColor = new(0.85f, 0.85f, 0.85f);
         // Saturated colours far from the floor's hue, so people never pass for floor.
-        static readonly Color VictimClothesColor = new(0.15f, 0.25f, 0.55f);
-        static readonly Color RescuerClothesColor = new(0.70f, 0.12f, 0.12f);
+        static readonly Color VictimShirtColor = new(0.15f, 0.25f, 0.55f);
+        static readonly Color RescuerShirtColor = new(0.70f, 0.12f, 0.12f);
+        // A dark neutral grey: no hue and too dark for the floor threshold.
+        static readonly Color TrousersColor = new(0.22f, 0.22f, 0.22f);
         static readonly Color SkinColor = new(0.85f, 0.65f, 0.52f);
         static readonly Color AmbientColor = new(0.6f, 0.6f, 0.6f);
         const float SunIntensity = 0.5f;
@@ -57,8 +59,9 @@ namespace SkyLead.Simulator.Editor
                 Floor = FloorMaterial(),
                 Wall = LitMaterial("Wall", WallColor),
                 Tables = LitMaterial("Tables", TablesColor),
-                VictimClothes = LitMaterial("VictimClothes", VictimClothesColor),
-                RescuerClothes = LitMaterial("RescuerClothes", RescuerClothesColor),
+                VictimShirt = LitMaterial("VictimShirt", VictimShirtColor),
+                RescuerShirt = LitMaterial("RescuerShirt", RescuerShirtColor),
+                Trousers = LitMaterial("Trousers", TrousersColor),
                 Skin = LitMaterial("Skin", SkinColor),
             });
 
