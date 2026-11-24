@@ -32,6 +32,7 @@ The brain only uses these four methods. `TelloDrone` implements them with `djite
 ## 3. The simulated drone
 
 - **Camera:** the calibrated Tello intrinsics (fx = 931.5, fy = 924.5, cx = 441.9, cy = 344.2 px) at 960×720, without distortion. The horizontal field of view is therefore 54.5° and the vertical one +20.4° / −22.1°, as `docs/protocol.md` states.
+- **Camera tilt:** the camera looks **11° down** from the drone's body, as measured on the floor tiles in the first real flight (11.3°). Without it the blind zone in front of the drone would be about 2 m instead of the real 1.25–1.45 m, and the photos would not match the real ones.
 - **Take-off height:** 80 cm, inside the 76–83 cm the real drone holds.
 - **Moves are exact.** Real drift is a few centimetres per move, below the 10 cm voxels, so the simulator does not add noise in v1.
 - **Collisions:** if a move would hit a wall, furniture or a person, the drone stops at the contact point and replies `error collision`. The real drone would crash there, so this is how the simulator exposes a planning bug.
@@ -79,7 +80,7 @@ pitch:-3;roll:0;yaw:90;tof:82;bat:100;
 
 | Field | Unit | Meaning |
 |---|---|---|
-| `pitch` | ° | Nose up is positive, as `pitch_deg` in `docs/protocol.md`. |
+| `pitch` | ° | The drone body's pitch, nose up positive, as the Tello reports it. The camera looks 11° further down (section 3), so `pitch_deg` in `docs/protocol.md` is `pitch − 11`. |
 | `roll` | ° | Not used by the brain yet. Kept so the format stays the Tello's. |
 | `yaw` | ° | From −180 to 180, 0 at take-off, **clockwise positive** (as `cw`). |
 | `tof` | cm | Distance from the drone to the floor. |
