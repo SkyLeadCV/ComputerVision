@@ -6,8 +6,7 @@ always towards floor it has not seen yet. A fresh photo confirms the move before
 reachable floor is left unseen, it returns to the take-off pad along an A* path over seen floor and, if it
 found a victim, guides the rescuer there (guide.py).
 
-Every decision goes to flights/<session>/decisions.jsonl with the numbers behind it, and in words to the terminal;
-replay_flight.py repeats a recorded real flight to rebuild them.
+Every decision goes to flights/<session>/decisions.jsonl with the numbers behind it, and in words to the terminal.
 
 Run with --synthetic it flies a stand-in drone inside the measured classroom (docs/classroom.md),
 seeing by casting rays instead of taking photos, so the logic can be checked without a drone.
@@ -420,8 +419,8 @@ class FlightRecorder:
     def take_photo(self) -> np.ndarray:
         photo = self.drone.take_photo()
         self.photos += 1
-        # PNG keeps the frame exactly as the explorer analysed it: a JPEG's small losses move the tile edges enough
-        # to change a replayed decision (replay_flight.py).
+        # PNG keeps the frame exactly as the explorer analysed it: a JPEG's small losses move the tile edges enough to
+        # change the analysis when the photos are run again offline.
         name = f"photo_{self.photos:03d}.png"
         write_image(self.folder / name, photo)
         self.write(name)
