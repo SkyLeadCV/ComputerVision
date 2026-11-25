@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 from types import SimpleNamespace
 
 import cv2
@@ -93,6 +94,7 @@ class FakeTello:
     def __init__(self):
         self.replies = {}
         self.sent = []
+        self.timeouts = []
 
     def connect(self):
         pass
@@ -110,7 +112,15 @@ class FakeTello:
         if not isinstance(timeout, int):
             raise TypeError(f"timeout must be an int, got {type(timeout).__name__}")
         self.sent.append(command)
-        return self.replies.get(command, "ok")
+        self.timeouts.append(timeout)
+        reply = self.replies.get(command, "ok")
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+    def emergency(self):
+        # djitellopy sends it and returns at once, without a reply.
+        self.sent.append("emergency")
 
     def get_current_state(self):
         return {"yaw": 90, "pitch": 0, "roll": 0, "tof": 80, "bat": 50}
@@ -154,3 +164,35 @@ def test_tello_without_video_raises(fake_tello, monkeypatch):
     monkeypatch.setattr(drone_interface, "REPLY_TIMEOUT_S", 0.2)
     with pytest.raises(TimeoutError):
         TelloDrone()
+
+
+def test_close_lands_within_the_short_landing_timeout(tello):
+    tello.send("takeoff")
+    tello.close()
+    assert tello.tello.sent == ["takeoff", "land"]
+    assert tello.tello.timeouts[-1] == drone_interface.LAND_TIMEOUT_S
+
+
+@pytest.mark.parametrize("landing", [
+    "Aborting command 'land'. Did not receive a response after 5 seconds",
+    "error Not joystick",
+    KeyboardInterrupt(),
+], ids=["no reply", "refused", "ctrl c again"])
+def test_a_landing_that_fails_stops_the_motors(tello, landing):
+    tello.send("takeoff")
+    tello.tello.replies["land"] = landing
+    tello.close()
+    assert tello.tello.sent == ["takeoff", "land", "emergency"]
+    assert not tello.flying
+
+
+def test_unity_landing_that_never_answers_ends_the_flight_quickly(simulator, monkeypatch):
+    monkeypatch.setattr(drone_interface, "LAND_TIMEOUT_S", 0.2)
+    simulator.replies["land"] = None
+    drone = UnityDrone("127.0.0.1", simulator.port)
+    drone.send("takeoff")
+    start = time.monotonic()
+    drone.close()
+    assert time.monotonic() - start < 2
+    assert simulator.received == ["takeoff", "land"]
+    assert not drone.flying

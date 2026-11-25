@@ -399,7 +399,8 @@ class SyntheticDrone(DroneInterface):
         self.rescuer = np.array(CLASSROOM_RESCUER_CM) - CLASSROOM_TAKEOFF_CM
         self.following = False
 
-    def _send(self, command: str) -> str:
+    def _send(self, command: str, timeout_s: int | None = None) -> str:
+        # Moves end at once here, so there is nothing to time out.
         name, _, value = command.partition(" ")
         if name in ("command", "streamon"):
             return "ok"
@@ -518,6 +519,10 @@ class SyntheticDrone(DroneInterface):
 
     def get_state(self) -> dict:
         return {"yaw_deg": self.yaw_deg, "pitch_deg": 0.0, "height_cm": self.height_cm, "battery_pct": 100.0}
+
+    def _emergency(self) -> None:
+        # Motors off: the stand-in drops to the floor where it is.
+        self.height_cm = 0.0
 
     def _disconnect(self) -> None:
         pass
