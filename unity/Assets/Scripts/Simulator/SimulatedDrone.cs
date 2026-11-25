@@ -13,8 +13,10 @@ namespace SkyLead.Simulator
         [Tooltip("Only colliders on these layers stop the drone: the classroom, never the map drawn in the same scene.")]
         [SerializeField] LayerMask obstacles = Physics.DefaultRaycastLayers;
 
-        [Tooltip("1 is the real drone's pace. Higher values fly the same moves faster.")]
-        [SerializeField, Min(0.1f)] float timeScale = 1f;
+        [Tooltip("1 is the real drone's pace. Higher values fly the same moves faster; slower is not allowed.")]
+        // Never slower than the real drone: at half its pace a forward 500 takes 20 s, the brain's reply timeout
+        // (REPLY_TIMEOUT_S in drone_interface.py), and a slower drone tests nothing a real one would not.
+        [SerializeField, Min(1f)] float timeScale = 1f;
 
         // docs/protocol.md's drone_radius_cm: the sphere swept along each move.
         public const float RadiusCm = 9f;
@@ -46,7 +48,7 @@ namespace SkyLead.Simulator
         public float TimeScale
         {
             get => timeScale;
-            set => timeScale = value;
+            set => timeScale = Mathf.Max(1f, value);
         }
 
         /// <summary>A new flight: landed on the take-off pad, facing the take-off heading (docs/simulator.md, section 2).</summary>
@@ -107,7 +109,10 @@ namespace SkyLead.Simulator
             positionCm = Vector3.MoveTowards(positionCm, targetCm, SpeedCmS * scaled);
             headingDeg = Mathf.MoveTowards(headingDeg, targetHeadingDeg, YawSpeedDegS * scaled);
             ApplyPose();
-            if (positionCm != targetCm || !Mathf.Approximately(headingDeg, targetHeadingDeg))
+            // MoveTowards lands exactly on its target, so the heading is compared exactly. Mathf.Approximately is no use
+            // here: where the editor flushes denormals (Linux), its tolerance is 0 and Approximately(0, 0) is false, so a
+            // move ending at heading 0, take-off included, never finished.
+            if (positionCm != targetCm || headingDeg != targetHeadingDeg)
                 return false;
             reply = pendingReply;
             pendingReply = null;
