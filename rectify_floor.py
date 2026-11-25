@@ -44,7 +44,11 @@ def floor_axes(
     # towards the floor, so that rays hitting the floor have a positive projection on it.
     if (inverse_camera_matrix @ np.append(floor_pixel, 1.0)) @ normal < 0:
         normal = -normal
+    return axes_from_normal(normal)
 
+
+def axes_from_normal(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the floor normal and the right and forward floor axes from the normal alone."""
     # Forward is where the camera looks, flattened onto the floor, so the top view is
     # oriented like the photo rather than along the tile joints.
     forward = OPTICAL_AXIS - (OPTICAL_AXIS @ normal) * normal

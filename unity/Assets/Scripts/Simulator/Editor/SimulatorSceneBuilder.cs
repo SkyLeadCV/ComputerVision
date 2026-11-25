@@ -48,13 +48,18 @@ namespace SkyLead.Simulator.Editor
 
             // Shades the walls' faces differently so corners stay visible. Without shadows: a shadow on the floor
             // would darken it out of the floor threshold, which the evenly lit real classroom does not do.
+            int layer = SimulatorLayer();
+            int mask = 1 << layer;
+
             var sun = new GameObject("Sun").AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.intensity = SunIntensity;
             sun.shadows = LightShadows.None;
             sun.transform.rotation = Quaternion.Euler(60f, 30f, 0f);
+            // The map opened on top has its own sun; each lights only its own scene.
+            sun.cullingMask = mask;
 
-            ClassroomBuilder.Build(new ClassroomLook
+            GameObject classroom = ClassroomBuilder.Build(new ClassroomLook
             {
                 Floor = FloorMaterial(),
                 Wall = LitMaterial("Wall", WallColor),
@@ -70,10 +75,31 @@ namespace SkyLead.Simulator.Editor
             drone.SetPositionAndRotation(
                 ClassroomLayout.ToUnity(pad.x, pad.y, ClassroomLayout.TakeOffHeightCm),
                 ClassroomLayout.HeadingToUnity(ClassroomLayout.TakeOffHeadingDeg));
-            var cameraObject = new GameObject("Tello Camera") { tag = "MainCamera" };
+            // Not the main camera: in the mission view the map's camera fills the screen, and this one only renders
+            // photos and the onboard feed.
+            var cameraObject = new GameObject("Tello Camera");
             cameraObject.transform.SetParent(drone, false);
-            cameraObject.AddComponent<Camera>().clearFlags = CameraClearFlags.SolidColor;
-            cameraObject.AddComponent<TelloCamera>().Configure();
+            var view = cameraObject.AddComponent<Camera>();
+            view.clearFlags = CameraClearFlags.SolidColor;
+            view.cullingMask = mask;
+            var telloCamera = cameraObject.AddComponent<TelloCamera>();
+            telloCamera.Configure();
+            SetField(telloCamera, "ambientLight", AmbientColor);
+
+            var simulated = drone.gameObject.AddComponent<SimulatedDrone>();
+            var obstacles = new SerializedObject(simulated);
+            obstacles.FindProperty("obstacles").intValue = mask;
+            obstacles.ApplyModifiedPropertiesWithoutUndo();
+            SetField(drone.gameObject.AddComponent<SimulatorLink>(), "telloCamera", telloCamera);
+            SetField(drone.gameObject.AddComponent<OnboardFeed>(), "telloCamera", telloCamera);
+
+            foreach (Transform part in classroom.GetComponentsInChildren<Transform>(true))
+                part.gameObject.layer = layer;
+            foreach (Transform part in drone.GetComponentsInChildren<Transform>(true))
+                part.gameObject.layer = layer;
+            sun.gameObject.layer = layer;
+
+            new GameObject("Mission View").AddComponent<MissionView>();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             Debug.Log($"Saved {ScenePath}");
@@ -180,6 +206,38 @@ namespace SkyLead.Simulator.Editor
             // Set on existing materials too, so rebuilding the scene always gives the same look.
             material.shader = shader;
             return material;
+        }
+
+        /// <summary>The Simulator layer, added to the project's layers the first time.</summary>
+        static int SimulatorLayer()
+        {
+            int existing = LayerMask.NameToLayer(MissionView.SimulatorLayer);
+            if (existing >= 0)
+                return existing;
+            var tagManager = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
+            SerializedProperty layers = tagManager.FindProperty("layers");
+            // Layers 0 to 7 are Unity's own.
+            for (int i = 8; i < layers.arraySize; i++)
+            {
+                SerializedProperty slot = layers.GetArrayElementAtIndex(i);
+                if (!string.IsNullOrEmpty(slot.stringValue))
+                    continue;
+                slot.stringValue = MissionView.SimulatorLayer;
+                tagManager.ApplyModifiedPropertiesWithoutUndo();
+                return i;
+            }
+            throw new InvalidOperationException("No free layer for the simulator.");
+        }
+
+        static void SetField(UnityEngine.Object component, string field, object value)
+        {
+            var settings = new SerializedObject(component);
+            SerializedProperty property = settings.FindProperty(field);
+            if (value is Color color)
+                property.colorValue = color;
+            else
+                property.objectReferenceValue = (UnityEngine.Object)value;
+            settings.ApplyModifiedPropertiesWithoutUndo();
         }
 
         static string Argument(string name)

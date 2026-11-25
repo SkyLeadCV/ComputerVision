@@ -192,24 +192,24 @@ namespace SkyLead.Map.Tests
         [Test]
         public void TheServerNeverListensOnEveryInterface()
         {
-            Assert.Throws<ArgumentException>(() => new MapServer(IPAddress.Any, 0));
-            Assert.Throws<ArgumentException>(() => new MapServer(IPAddress.IPv6Any, 0));
+            Assert.Throws<ArgumentException>(() => new LineServer(IPAddress.Any, 0));
+            Assert.Throws<ArgumentException>(() => new LineServer(IPAddress.IPv6Any, 0));
         }
 
         [Test]
         public void OnlyTheTailscaleRangeCountsAsTailscale()
         {
-            Assert.IsTrue(MapServer.IsTailscale(IPAddress.Parse("100.64.0.1")));
-            Assert.IsTrue(MapServer.IsTailscale(IPAddress.Parse("100.127.255.254")));
-            Assert.IsFalse(MapServer.IsTailscale(IPAddress.Parse("100.63.255.255")));
-            Assert.IsFalse(MapServer.IsTailscale(IPAddress.Parse("100.128.0.1")));
-            Assert.IsFalse(MapServer.IsTailscale(IPAddress.Parse("192.168.10.1")));
+            Assert.IsTrue(LineServer.IsTailscale(IPAddress.Parse("100.64.0.1")));
+            Assert.IsTrue(LineServer.IsTailscale(IPAddress.Parse("100.127.255.254")));
+            Assert.IsFalse(LineServer.IsTailscale(IPAddress.Parse("100.63.255.255")));
+            Assert.IsFalse(LineServer.IsTailscale(IPAddress.Parse("100.128.0.1")));
+            Assert.IsFalse(LineServer.IsTailscale(IPAddress.Parse("192.168.10.1")));
         }
 
         [Test]
         public void TheServerReceivesLinesOverARealSocketAndANewConnectionReplacesTheOld()
         {
-            using var server = new MapServer(IPAddress.Loopback, 0);
+            using var server = new LineServer(IPAddress.Loopback, 0);
             server.Start();
 
             using var first = new TcpClient();
@@ -235,7 +235,7 @@ namespace SkyLead.Map.Tests
             stream.Flush();
         }
 
-        static List<string> Receive(MapServer server, int count)
+        static List<string> Receive(LineServer server, int count)
         {
             var lines = new List<string>();
             var clock = Stopwatch.StartNew();

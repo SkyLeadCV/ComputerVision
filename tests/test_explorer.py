@@ -25,6 +25,7 @@ def test_trusted_rays_cut_at_entry_plus_one_step():
         allowed_cm=np.zeros(3),
         command="",
         camera_height_cm=80.0,
+        floor_normal=np.array([0.0, 1.0, 0.0]),
     )
     rays = explorer.trusted_rays(free_space)
     assert rays["stop_cm"].tolist() == [250, 300, 300]
@@ -74,3 +75,21 @@ def test_grid_ignores_a_ray_that_saw_no_floor():
     grid = explorer.Grid()
     grid.add_observation(np.array([0.0, 0.0]), 0.0, one_ray(90.0, 100.0, 100.0, explorer.STOP_OBSTACLE))
     assert (grid.cells == explorer.UNKNOWN).all()
+
+
+class FakeDetector:
+    """Reports which floor each photo's victims were placed on."""
+
+    def find_victims(self, photo, floor_normal, camera_height_cm):
+        return [(photo, camera_height_cm)]
+
+
+def test_eyes_place_victims_on_the_last_floor_measured(camera_matrix, monkeypatch):
+    floors = {"no tile yet": None, "tile": FreeSpace(*[np.zeros(1)] * 5, "", 80.0, np.array([0.0, 1.0, 0.0])),
+              "no tile": None}
+    monkeypatch.setattr(explorer, "analyze_frame", lambda photo, camera_matrix: floors[photo])
+    eyes = explorer.Eyes(camera_matrix, FakeDetector())
+
+    assert eyes.look("no tile yet") == (None, [])
+    assert eyes.look("tile")[1] == [("tile", 80.0)]
+    assert eyes.look("no tile") == (None, [("no tile", 80.0)])
