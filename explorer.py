@@ -742,17 +742,18 @@ class Explorer:
         """A sweep without a single tile: most likely a wall inside the blind zone, which leaves too thin a strip of
         floor for a whole tile (photos 15-30 and 49-62 of the first long real exploration, 1.3-1.5 m from walls).
 
-        Back off half the last forward along its own trail, which the drone flew and so is free even if the camera
-        cannot see behind, and sweep again: a row of tiles comes into view. If there is still none, or nothing to
-        back off along, open the fan with a photo further round on each side. Returns the heading to plan from and
-        how many photos had a tile.
+        Face the way the last forward went, towards the wall, and back off half of it: the camera keeps looking at
+        the wall while the drone retraces its own trail, which it flew and so is free though the camera cannot see
+        behind. The sweep from there sees a row of tiles and the floor up to the wall, which measures how far the
+        wall is. If there is still no tile, or nothing to back off along, open the fan with a photo further round
+        on each side. Returns the heading to plan from and how many photos had a tile.
         """
         tiles = 0
         if self.last_forward is not None and self.last_forward[1] / 2 >= MIN_FORWARD_CM:
             heading, distance = self.last_forward
             back = int(distance / 2)
-            self.log.note("recover", f"no tile in the sweep: backing off {back} cm along the last move's trail "
-                          f"(forward {distance:.0f} at yaw {heading:.0f}) to see the floor before the wall",
+            self.log.note("recover", f"no tile in the sweep: facing yaw {heading:.0f} again and backing off {back} cm "
+                          f"along the trail of its last forward ({distance:.0f} cm) to see the floor up to the wall",
                           heading_deg=heading, back_cm=back)
             self.turn(heading - self.yaw_deg)
             self.command(f"back {back}")
