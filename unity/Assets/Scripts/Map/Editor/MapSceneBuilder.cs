@@ -64,7 +64,7 @@ namespace SkyLead.Map.Editor
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = Background;
             EnableAntialiasing(camera);
-            MapView.Frame(map, out var top, out _);
+            MapView.Frame(MapView.AreaToShow(mapObject.GetComponent<FloorPlan>(), mapObject.GetComponent<FlightTrail>()), out var top, out _);
             camera.transform.SetPositionAndRotation(top.position, top.rotation);
             camera.fieldOfView = MapView.TopFovDeg;
             var view = new SerializedObject(camera.gameObject.AddComponent<MapView>());
@@ -94,7 +94,7 @@ namespace SkyLead.Map.Editor
             map.RebuildDirtyChunks();
 
             Camera camera = Camera.main;
-            MapView.Frame(map, out var top, out var threeD);
+            MapView.Frame(MapView.AreaToShow(plan, map.GetComponent<FlightTrail>()), out var top, out var threeD);
             // In batch mode the first render after the chunks are created drew every submesh with a single
             // material (seen with URP 17 here); later renders are correct, so a first one is thrown away.
             Render(camera, null);

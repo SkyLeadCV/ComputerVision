@@ -64,6 +64,10 @@ namespace SkyLead.Map
                     // -1 means no rescuer in view (docs/protocol.md).
                     ("RESCUER", personDistanceCm >= 0f ? Metres(personDistanceCm) : "NO CONTACT"),
                 };
+                int outside = GetComponent<VoxelMap>().RaysOutside;
+                if (outside > 0)
+                    // Floor seen beyond the voxel block cannot be drawn; said here so it is never lost silently.
+                    rows.Add(("OUTSIDE", $"{outside} rays past the map"));
                 if (endReason != null)
                     // Shown as it arrives: the brain can still report back_at_start without having made it back.
                     rows.Add(("END", endReason.ToUpperInvariant()));
@@ -149,7 +153,7 @@ namespace SkyLead.Map
                         Color previous = GUI.contentColor;
                         if (name == "VICTIMS" && Victims > 0)
                             GUI.contentColor = VictimRed;
-                        else if (name == "END")
+                        else if (name == "END" || name == "OUTSIDE")
                             GUI.contentColor = Amber;
                         GUI.Label(valueRect, name == "END" || name == "RESCUER" ? Title(text) : text, value);
                         GUI.contentColor = previous;

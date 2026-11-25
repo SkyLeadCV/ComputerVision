@@ -153,6 +153,50 @@ namespace SkyLead.Map.Tests
             Assert.Less(Vector3.Distance(VoxelGrid.ToUnity(5f, 5f, 0f), plan.ScanRim[1]), 1e-4f);
         }
 
+        static string ObservationAt(float x, float y, float yawDeg, float stopCm) =>
+            FormattableString.Invariant($"{{\"type\": \"observation\", \"seq\": 1, \"t\": 1.0, ")
+            + FormattableString.Invariant($"\"pose\": {{\"x\": {x}, \"y\": {y}, \"z\": 80.0, \"yaw_deg\": {yawDeg}, \"pitch_deg\": -11.0}}, ")
+            + FormattableString.Invariant($"\"rays\": {{\"angle_deg\": [0.0], \"entry_cm\": [120.0], \"stop_cm\": [{stopCm}], \"kind\": [2]}}}}");
+
+        [Test]
+        public void ADroneFarFromTheSimulatorsPadStillCarvesItsFloor()
+        {
+            // Where the second real exploration flew (25-11), turned, and well outside the old classroom-sized block.
+            receiver.Receive(SessionStartLine("s"));
+            receiver.Receive(ObservationAt(-241f, 297f, -144f, 300f));
+
+            var map = mapObject.GetComponent<VoxelMap>();
+            float heading = -144f * Mathf.Deg2Rad;
+            Assert.IsTrue(map.Grid.TryCell(-241f + 250f * Mathf.Sin(heading), 297f + 250f * Mathf.Cos(heading), 85f, out Vector3Int cell));
+            Assert.AreEqual(Voxel.Empty, map.Grid[cell.x, cell.y, cell.z]);
+            Assert.AreEqual(0, map.RaysOutside);
+        }
+
+        [Test]
+        public void FloorSeenBeyondTheBlockIsCountedAndShownNotLostSilently()
+        {
+            receiver.Receive(SessionStartLine("s"));
+            // 750 cm out and looking further out: the ray's floor ends 1050 cm from take-off, past the 800 cm block.
+            receiver.Receive(ObservationAt(750f, 0f, 90f, 300f));
+
+            Assert.AreEqual(1, mapObject.GetComponent<VoxelMap>().RaysOutside);
+            StringAssert.Contains("OUTSIDE 1 rays past the map", mapObject.GetComponent<StatusPanel>().Text);
+            receiver.Receive(SessionStartLine("another"));
+            Assert.AreEqual(0, mapObject.GetComponent<VoxelMap>().RaysOutside);
+        }
+
+        [Test]
+        public void TheCameraShowsTheTakeOffAndEverythingExploredSinceWhereverItIs()
+        {
+            receiver.Receive(SessionStartLine("s"));
+            receiver.Receive(ObservationAt(-241f, 297f, -144f, 300f));
+
+            Rect area = MapView.AreaToShow(mapObject.GetComponent<FloorPlan>(), mapObject.GetComponent<FlightTrail>());
+            Assert.IsTrue(area.Contains(Vector2.zero), "the take-off spot");
+            Vector3 rim = mapObject.GetComponent<FloorPlan>().ScanRim[0] * 100f;
+            Assert.IsTrue(area.Contains(new Vector2(rim.x, rim.z)), "the floor just proven free");
+        }
+
         [Test]
         public void ARevealInStepsEndsExactlyAsOneFullObservationAndPaintsNoFaceBeforeTheEnd()
         {
