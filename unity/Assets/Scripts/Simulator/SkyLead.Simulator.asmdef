@@ -1,7 +1,9 @@
 {
     "name": "SkyLead.Simulator",
     "rootNamespace": "SkyLead.Simulator",
-    "references": [],
+    "references": [
+        "SkyLead.Map"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
