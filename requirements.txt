@@ -1,4 +1,6 @@
 numpy==2.5.4
+# ultralytics pulls opencv-python, which overwrites this build and its CascadeClassifier. After installing, run:
+#   pip install --force-reinstall --no-deps opencv-contrib-python==5.0.0.93
 opencv-contrib-python==5.0.0.93
 djitellopy==2.5.0
 ultralytics==8.4.218
