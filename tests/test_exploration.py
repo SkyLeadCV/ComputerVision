@@ -60,10 +60,10 @@ def test_synthetic_exploration_comes_back_home(takeoff_cm, camera_matrix, output
 def test_an_interrupted_mission_still_ends_its_session(failure, reason, camera_matrix, output_dirs, monkeypatch):
     drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
 
-    def fail_on_first_forward(command):
+    def fail_on_first_forward(command, timeout_s=None):
         if command.startswith("forward"):
             raise failure(command)
-        return explorer.SyntheticDrone._send(drone, command)
+        return explorer.SyntheticDrone._send(drone, command, timeout_s)
 
     monkeypatch.setattr(drone, "_send", fail_on_first_forward)
     with pytest.raises(failure):

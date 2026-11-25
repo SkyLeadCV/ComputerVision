@@ -26,6 +26,9 @@ OUTPUT_DIR = Path("photos")
 # short for a slow take-off, which djitellopy itself gives 20 s. An int, because djitellopy's
 # type check rejects a float timeout.
 REPLY_TIMEOUT_S = 20
+# Landing at the end of a flight waits this long and no more: a landing from the flight height takes about 3 s, and a
+# drone that has not landed by then is cut off with emergency instead of leaving the operator 20 s without control.
+LAND_TIMEOUT_S = 5
 SIMULATOR_PORT = 5006
 FRAME_SHAPE = (720, 960)
 # The H.264 stream lags behind the camera, so a frame grabbed right after "ok" can still show the move.
@@ -49,27 +52,45 @@ class DroneInterface(ABC):
         # reply; tracking it here is what lets close() land only when needed.
         self.flying = False
 
-    def send(self, command: str) -> str:
+    def send(self, command: str, timeout_s: int | None = None) -> str:
         """Send one SDK command and return the reply once the move has finished."""
         # A take-off can time out and still happen, so the drone counts as flying from the moment
         # it is asked to take off. Landing a drone that never left the ground only returns an error.
         if command == "takeoff":
             self.flying = True
-        reply = self._send(command)
+        # Read at call time rather than as a default argument, so the module's value always applies.
+        reply = self._send(command, REPLY_TIMEOUT_S if timeout_s is None else timeout_s)
         if command == "land" and reply == "ok":
             self.flying = False
         return reply
 
     def close(self) -> None:
-        """Land if still flying and close the connection."""
+        """Land if still flying, or stop the motors if it does not land, and close the connection."""
         try:
             if self.flying:
-                self.send("land")
+                self.land_or_stop()
         finally:
             self._disconnect()
 
+    def land_or_stop(self) -> None:
+        """Land; if the drone does not confirm it within LAND_TIMEOUT_S, or Ctrl+C comes again, stop the motors."""
+        try:
+            reply = self.send("land", LAND_TIMEOUT_S)
+        except (TimeoutError, OSError, KeyboardInterrupt):
+            reply = None
+        if reply != "ok":
+            self.emergency()
+
+    def emergency(self) -> None:
+        """Stop the motors at once, without waiting for any reply: the last resort when landing fails."""
+        self._emergency()
+        self.flying = False
+
     @abstractmethod
-    def _send(self, command: str) -> str: ...
+    def _send(self, command: str, timeout_s: int) -> str: ...
+
+    @abstractmethod
+    def _emergency(self) -> None: ...
 
     @abstractmethod
     def take_photo(self) -> np.ndarray:
@@ -91,7 +112,8 @@ class UnityDrone(DroneInterface):
         self.connection = socket.create_connection((host, port), timeout=REPLY_TIMEOUT_S)
         self.reader = self.connection.makefile("rb")
 
-    def _request(self, command: str) -> str:
+    def _request(self, command: str, timeout_s: int | None = None) -> str:
+        self.connection.settimeout(REPLY_TIMEOUT_S if timeout_s is None else timeout_s)
         self.connection.sendall(f"{command}\n".encode("ascii"))
         line = self.reader.readline()
         if not line:
@@ -100,8 +122,13 @@ class UnityDrone(DroneInterface):
         # "ok" into something else and stop close() from landing.
         return line.decode("ascii").strip()
 
-    def _send(self, command: str) -> str:
-        return self._request(command)
+    def _send(self, command: str, timeout_s: int) -> str:
+        return self._request(command, timeout_s)
+
+    def _emergency(self) -> None:
+        # The simulator has no emergency command (docs/simulator.md); dropping the connection ends the flight, since
+        # a new connection resets its drone to the take-off pad.
+        self.connection.close()
 
     def take_photo(self) -> np.ndarray:
         header = self._request("photo")
@@ -144,8 +171,8 @@ class TelloDrone(DroneInterface):
                 raise TimeoutError("No video from the Tello")
             time.sleep(VIDEO_POLL_S)
 
-    def _send(self, command: str) -> str:
-        reply = self.tello.send_command_with_return(command, timeout=REPLY_TIMEOUT_S)
+    def _send(self, command: str, timeout_s: int) -> str:
+        reply = self.tello.send_command_with_return(command, timeout=timeout_s)
         self.last_reply_time = time.monotonic()
         # djitellopy reports a timeout as a reply text instead of raising.
         if reply.startswith("Aborting command"):
@@ -160,6 +187,10 @@ class TelloDrone(DroneInterface):
 
     def get_state(self) -> dict:
         return state_from_fields(self.tello.get_current_state())
+
+    def _emergency(self) -> None:
+        # djitellopy sends it without waiting for a reply, so it goes out even when the link has stopped answering.
+        self.tello.emergency()
 
     def _disconnect(self) -> None:
         self.tello.end()

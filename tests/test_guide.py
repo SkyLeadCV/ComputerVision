@@ -11,8 +11,8 @@ def test_the_rescuer_is_led_to_the_victim_and_never_left_behind(takeoff_cm, came
     drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch, takeoff_cm, guided=True)
     gaps = []
 
-    def send_and_measure(command):
-        reply = type(drone)._send(drone, command)
+    def send_and_measure(command, timeout_s=None):
+        reply = type(drone)._send(drone, command, timeout_s)
         if command.startswith("back"):
             gaps.append(np.linalg.norm(drone.rescuer - drone.position))
         return reply
