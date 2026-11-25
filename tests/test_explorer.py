@@ -93,3 +93,34 @@ def test_eyes_place_victims_on_the_last_floor_measured(camera_matrix, monkeypatc
     assert eyes.look("no tile yet") == (None, [])
     assert eyes.look("tile")[1] == [("tile", 80.0)]
     assert eyes.look("no tile") == (None, [("no tile", 80.0)])
+
+
+class FakeDrone:
+    def send(self, command):
+        if command == "forward 500":
+            raise TimeoutError("no reply")
+        return "ok"
+
+    def take_photo(self):
+        return np.zeros((720, 960, 3), np.uint8)
+
+    def get_state(self):
+        return {"yaw_deg": 0.0, "pitch_deg": 0.0, "height_cm": 80.0, "battery_pct": 87.0}
+
+    def close(self):
+        pass
+
+
+def test_the_recorder_keeps_photos_commands_and_the_error_that_stopped_the_flight(tmp_path):
+    recorder = explorer.FlightRecorder(FakeDrone(), tmp_path / "flight", lambda: 1.5)
+    recorder.send("takeoff")
+    recorder.take_photo()
+    with pytest.raises(TimeoutError):
+        recorder.send("forward 500")
+    recorder.close()
+
+    assert (tmp_path / "flight" / "photo_001.jpg").exists()
+    lines = (tmp_path / "flight" / "commands.log").read_text(encoding="utf-8").splitlines()
+    assert "takeoff" in lines[0] and "'battery_pct': 87.0" in lines[0]
+    assert "photo_001.jpg" in lines[1]
+    assert "TimeoutError: no reply" in lines[2]

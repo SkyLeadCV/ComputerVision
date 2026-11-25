@@ -361,6 +361,48 @@ def nearest_point(polygon: np.ndarray, point: np.ndarray) -> np.ndarray:
     return candidates[np.argmin(np.linalg.norm(candidates - point, axis=1))]
 
 
+class FlightRecorder:
+    """A drone that also keeps what the map never gets: every photo, and every command with its reply and the
+    drone's state, in one folder per flight, to see afterwards why the drone did what it did."""
+
+    def __init__(self, drone: DroneInterface, folder: Path, clock) -> None:
+        self.drone, self.folder, self.clock = drone, folder, clock
+        folder.mkdir(parents=True, exist_ok=True)
+        self.log = (folder / "commands.log").open("w", encoding="utf-8")
+        self.photos = 0
+
+    def send(self, command: str) -> str:
+        try:
+            reply = self.drone.send(command)
+        except Exception as error:
+            self.write(f"{command:12} -> {type(error).__name__}: {error}")
+            raise
+        self.write(f"{command:12} -> {reply:24} {self.drone.get_state()}")
+        return reply
+
+    def take_photo(self) -> np.ndarray:
+        photo = self.drone.take_photo()
+        self.photos += 1
+        name = f"photo_{self.photos:03d}.jpg"
+        write_image(self.folder / name, photo)
+        self.write(name)
+        return photo
+
+    def get_state(self) -> dict:
+        return self.drone.get_state()
+
+    def close(self) -> None:
+        try:
+            self.drone.close()
+        finally:
+            self.log.close()
+
+    def write(self, line: str) -> None:
+        self.log.write(f"{self.clock():8.1f} s  {line}\n")
+        # A crash or Ctrl+C must not lose the last lines, which are the ones that explain it.
+        self.log.flush()
+
+
 class Eyes:
     """Free space and victims from one photo.
 
@@ -544,7 +586,7 @@ class Explorer:
         self.stops = 0
         # Each known victim: its id and every map position it was seen at; the marker sits at their mean.
         self.victims: list[tuple[int, list[np.ndarray]]] = []
-        OUTPUT_DIR.mkdir(exist_ok=True)
+        self.output_dir = OUTPUT_DIR
 
     def pose(self) -> dict:
         return {"x": round(float(self.position[0]), 1), "y": round(float(self.position[1]), 1), "yaw_deg": round(self.yaw_deg, 1)}
@@ -783,6 +825,8 @@ class Explorer:
     def run(self, session: str) -> str:
         camera = {"hfov_deg": round(self.fov["left_deg"] + self.fov["right_deg"], 1),
                   "vfov_up_deg": round(self.fov["up_deg"], 1), "vfov_down_deg": round(self.fov["down_deg"], 1)}
+        self.output_dir = OUTPUT_DIR / session
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.map.send("session_start", self.clock(), version=1, session=session, camera=camera,
                       drone_radius_cm=DRONE_RADIUS_CM, safety_margin_cm=SAFETY_MARGIN_CM)
         # Every way out of the mission closes the session, so the recording and the map never miss its end.
@@ -823,7 +867,7 @@ class Explorer:
                 self.turn(centre + 180 - self.yaw_deg)
                 centre = self.sweep()
                 options = self.candidates(centre)
-            write_image(OUTPUT_DIR / f"1_grid_stop{self.stops:02d}.png",
+            write_image(self.output_dir / f"1_grid_stop{self.stops:02d}.png",
                         self.draw(f"stop {self.stops}", (centre + options[0][0], options[0][1]) if options else None))
             if options and self.advance(centre, options):
                 continue
@@ -835,7 +879,7 @@ class Explorer:
             reason, outcome = "no_path_home", "no path home"
         else:
             outcome = f"{home:.0f} cm from take-off"
-        write_image(OUTPUT_DIR / "2_final.png", self.draw(f"final: {self.stops} stops, {outcome}"))
+        write_image(self.output_dir / "2_final.png", self.draw(f"final: {self.stops} stops, {outcome}"))
         return reason, outcome
 
 
@@ -850,6 +894,7 @@ def main() -> None:
 
     with np.load(CALIBRATION_FILE) as calibration:
         camera_matrix = calibration["camera_matrix"]
+    session = datetime.now().strftime("%Y%m%d_%H%M%S")
     room = None
     if args.synthetic:
         drone = SyntheticDrone(camera_matrix)
@@ -857,13 +902,13 @@ def main() -> None:
         guide = Guide(drone.find_rescuer, camera_matrix)
         room = np.array(CLASSROOM_FLOOR_CM, float) - CLASSROOM_TAKEOFF_CM
     else:
-        drone = UnityDrone(args.sim) if args.sim else TelloDrone()
         start = time.monotonic()
+        clock = lambda: time.monotonic() - start
+        drone = FlightRecorder(UnityDrone(args.sim) if args.sim else TelloDrone(), FLIGHTS_DIR / session, clock)
         eyes = Eyes(camera_matrix, VictimDetector(camera_matrix))
-        see, clock = (lambda: eyes.look(drone.take_photo())), (lambda: time.monotonic() - start)
+        see = lambda: eyes.look(drone.take_photo())
         guide = Guide(lambda: find_rescuer(drone.take_photo(), camera_matrix), camera_matrix)
 
-    session = datetime.now().strftime("%Y%m%d_%H%M%S")
     map_link = MapLink(session, args.map)
     explorer = Explorer(drone, see, clock, camera_fov(camera_matrix), map_link, room, guide)
     try:
@@ -871,7 +916,7 @@ def main() -> None:
     finally:
         drone.close()
         map_link.close()
-    print(f"{result}: {explorer.stops} stops, {len(explorer.victims)} victims, {map_link.seq} messages in {map_link.path}, grid images in {OUTPUT_DIR}/")
+    print(f"{result}: {explorer.stops} stops, {len(explorer.victims)} victims, {map_link.seq} messages in {map_link.path}, grid images in {explorer.output_dir}/")
 
 
 if __name__ == "__main__":
