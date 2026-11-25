@@ -111,9 +111,9 @@ def rectify(points: np.ndarray, inverse_camera_matrix: np.ndarray, basis: np.nda
 
 def edge_coverage(start: np.ndarray, end: np.ndarray, edges: np.ndarray) -> float:
     samples = np.linspace(start, end, SIDE_SAMPLE_COUNT).round().astype(int)
-    # A side can reach the image border, where rounding lands a sample one pixel past it; what the image does not
-    # show is no edge, so such samples count as uncovered instead of indexing outside the image.
-    height, width = edges.shape[:2]
+    # A corner can round to one pixel past the image (960 or 720 in the first real exploration, which crashed it);
+    # a side out of the image shows no edge there.
+    height, width = edges.shape
     inside = (samples[:, 0] >= 0) & (samples[:, 0] < width) & (samples[:, 1] >= 0) & (samples[:, 1] < height)
     covered = np.zeros(len(samples), bool)
     covered[inside] = edges[samples[inside, 1], samples[inside, 0]] > 0
