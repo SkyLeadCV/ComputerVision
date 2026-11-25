@@ -97,3 +97,57 @@ def test_a_crash_is_kept_in_the_decision_log(camera_matrix, output_dirs, monkeyp
     lines = (output_dirs / "flights" / "crash" / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
     crash = json.loads(lines[-2])
     assert crash["event"] == "crash" and "ZeroDivisionError" in crash["traceback"]
+
+
+def blind_after_forwards(drone, exploration, monkeypatch, forwards, photos):
+    """See no tile in the given number of photos once the drone has flown that many forwards; record every command
+    and the yaw of every photo."""
+    commands, photo_yaws, blind = [], [], {"left": photos}
+
+    def send(command, timeout_s=None):
+        commands.append(command)
+        return explorer.SyntheticDrone._send(drone, command, timeout_s)
+
+    def see():
+        photo_yaws.append(round(drone.yaw_deg))
+        if sum(c.startswith("forward") for c in commands) >= forwards and blind["left"] > 0:
+            blind["left"] -= 1
+            return None, []
+        return drone.see()
+
+    monkeypatch.setattr(drone, "_send", send)
+    monkeypatch.setattr(exploration, "see", see)
+    return commands, photo_yaws
+
+
+def test_a_sweep_without_tiles_backs_off_half_the_last_move_along_its_trail(camera_matrix, output_dirs, monkeypatch):
+    drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
+    commands, _ = blind_after_forwards(drone, exploration, monkeypatch, forwards=1, photos=3)
+    assert exploration.run("test").startswith("back_at_start")
+
+    first_forward = next(c for c in commands if c.startswith("forward"))
+    back = next(index for index, c in enumerate(commands) if c.startswith("back"))
+    assert commands[back] == f"back {int(int(first_forward.split()[1]) / 2)}"
+    # It faces the way it came first, so the back-off retraces the trail.
+    assert commands[back - 1] in ("cw 54", "ccw 54")
+
+
+def test_still_without_tiles_it_opens_the_fan(camera_matrix, output_dirs, monkeypatch):
+    drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
+    # The sweep, and the sweep after backing off.
+    commands, photo_yaws = blind_after_forwards(drone, exploration, monkeypatch, forwards=1, photos=6)
+    assert exploration.run("test").startswith("back_at_start")
+
+    assert any(c.startswith("back") for c in commands)
+    # Once backed off and swept again, a photo further round on each side of the heading it came along.
+    assert {108, -108} <= {explorer.wrap_deg(yaw) for yaw in photo_yaws}
+
+
+def test_at_take_off_there_is_nothing_to_back_off_along(camera_matrix, output_dirs, monkeypatch):
+    drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
+    commands, photo_yaws = blind_after_forwards(drone, exploration, monkeypatch, forwards=0, photos=3)
+    # Blind ahead, it never finds the way out of the take-off arm, but it is home and says so.
+    assert exploration.run("test").startswith("back_at_start")
+
+    assert photo_yaws[:5] == [0, 54, -54, 108, -108]
+    assert not any(c.startswith("back") for c in commands)
