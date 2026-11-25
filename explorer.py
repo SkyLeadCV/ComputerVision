@@ -3,7 +3,8 @@
 At each stop the drone takes three photos (left, ahead, right), adds them to the grid and picks the
 next move on the grid: right only when a whole step is clear there, otherwise ahead, otherwise left,
 always towards floor it has not seen yet. A fresh photo confirms the move before it flies. When no
-reachable floor is left unseen, it returns to the take-off pad along an A* path over seen floor.
+reachable floor is left unseen, it returns to the take-off pad along an A* path over seen floor and, if it
+found a victim, guides the rescuer there (guide.py).
 
 Run with --synthetic it flies a stand-in drone inside the measured classroom (docs/classroom.md),
 seeing by casting rays instead of taking photos, so the logic can be checked without a drone.
@@ -21,12 +22,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from detect_rescuer import FACE_BOX_WIDTH_CM, Rescuer, find_rescuer
 from drone_interface import DroneInterface, TelloDrone, UnityDrone
 from find_free_space import (
     DRONE_RADIUS_CM, MAX_FORWARD_CM, MAX_RANGE_CM, MIN_FORWARD_CM, RAY_STEP_CM, SAFETY_MARGIN_CM, STEP_LIMIT_CM,
     STOP_OBSTACLE, STOP_RANGE, SWEEP_STEP_DEG, allowed_distances, drone_safe_area, free_polygon_from_drone,
 )
 from free_space_fast import FreeSpace, analyze_frame
+from guide import CLIMB_CM, Guide
 from image_io import write_image
 from victim_detection import Victim, VictimDetector
 
@@ -79,6 +82,15 @@ CLASSROOM_TAKEOFF_CM = (60, 60)
 # points along. 170 x 50 cm is a lying adult.
 CLASSROOM_VICTIMS = [((360.0, 470.0), 90.0)]
 VICTIM_BODY_CM = (170.0, 50.0)
+# Where the rescuer waits while the drone explores, in the room frame: behind the take-off pad, out of the camera's view.
+CLASSROOM_RESCUER_CM = (60.0, 20.0)
+# The synthetic rescuer walks to stand this far in front of the camera, at most SYNTHETIC_RESCUER_WALK_CM in the
+# second a photo takes: a careful walk, half a normal pace.
+SYNTHETIC_RESCUER_FOLLOW_CM = 100.0
+SYNTHETIC_RESCUER_WALK_CM = 60.0
+# Where Viola-Jones finds the face from the guiding height: closer, it leaves the top of the view; farther, its
+# box is under MIN_FACE_PX.
+SYNTHETIC_FACE_RANGE_CM = (50.0, 400.0)
 # YOLO found every class victim up to 3 m away; the synthetic drone sees them a little further, as the simulator would.
 SYNTHETIC_VICTIM_RANGE_CM = 400.0
 SYNTHETIC_VICTIM_CONFIDENCE = 0.9
@@ -377,23 +389,34 @@ class SyntheticDrone(DroneInterface):
         self.bodies = [victim_body(np.array(centre) - CLASSROOM_TAKEOFF_CM, heading) for centre, heading in CLASSROOM_VICTIMS]
         self.segments = np.concatenate([np.stack([outline, np.roll(outline, -1, axis=0)], axis=1)
                                         for outline in [floor, *self.bodies]])
+        self.camera_matrix = camera_matrix
         self.fov = camera_fov(camera_matrix)
         self.position = np.zeros(2)
         self.yaw_deg = 0.0
+        self.height_cm = 0.0
         self.clock_s = 0.0
+        self.rescuer = np.array(CLASSROOM_RESCUER_CM) - CLASSROOM_TAKEOFF_CM
+        self.following = False
 
     def _send(self, command: str) -> str:
         name, _, value = command.partition(" ")
-        if name in ("command", "streamon", "takeoff", "land"):
+        if name in ("command", "streamon"):
+            return "ok"
+        if name in ("takeoff", "land"):
+            self.height_cm = SYNTHETIC_HEIGHT_CM if name == "takeoff" else 0.0
             return "ok"
         amount = float(value)
         if name in ("cw", "ccw"):
             self.yaw_deg = wrap_deg(self.yaw_deg + (amount if name == "cw" else -amount))
             self.clock_s += amount / SYNTHETIC_YAW_SPEED_DEG_S
             return "ok"
-        if name == "forward":
+        if name in ("up", "down"):
+            self.height_cm += amount if name == "up" else -amount
             self.clock_s += amount / SYNTHETIC_FORWARD_SPEED_CM_S
-            unit = direction(self.yaw_deg)
+            return "ok"
+        if name in ("forward", "back"):
+            self.clock_s += amount / SYNTHETIC_FORWARD_SPEED_CM_S
+            unit = direction(self.yaw_deg) * (1.0 if name == "forward" else -1.0)
             for distance in np.arange(1.0, amount + 1e-9, 1.0):
                 if self.clearance(self.position + distance * unit) < DRONE_RADIUS_CM:
                     # Like the simulator, stop at the contact point and report the planning bug.
@@ -462,11 +485,38 @@ class SyntheticDrone(DroneInterface):
         floor_cm = np.array([offset @ direction(self.yaw_deg + 90.0), offset @ direction(self.yaw_deg)])
         return Victim(floor_cm, SYNTHETIC_VICTIM_CONFIDENCE, 0.0, np.zeros(4))
 
+    def find_rescuer(self) -> Rescuer | None:
+        """The rescuer as detect_rescuer would report it, if its face is in view; then it walks during the photo."""
+        self.clock_s += SYNTHETIC_PHOTO_TIME_S
+        offset = self.rescuer - self.position
+        angle = wrap_deg(math.degrees(math.atan2(offset[0], offset[1])) - self.yaw_deg)
+        # detect_rescuer measures the distance along the camera's axis.
+        distance = float(offset @ direction(self.yaw_deg))
+        nearest, farthest = SYNTHETIC_FACE_RANGE_CM
+        seen = (self.height_cm >= SYNTHETIC_HEIGHT_CM + CLIMB_CM and -self.fov["left_deg"] <= angle <= self.fov["right_deg"]
+                and nearest <= distance <= farthest)
+        rescuer = None
+        if seen:
+            # The box Viola-Jones would draw: as wide as the face at that distance, centred where it projects.
+            fx, cx = self.camera_matrix[0, 0], self.camera_matrix[0, 2]
+            width = fx * FACE_BOX_WIDTH_CM / distance
+            centre = cx + fx * float(offset @ direction(self.yaw_deg + 90.0)) / distance
+            rescuer = Rescuer((round(centre - width / 2), 0, round(width), round(width)), distance)
+        walk = self.position + SYNTHETIC_RESCUER_FOLLOW_CM * direction(self.yaw_deg) - self.rescuer
+        self.rescuer = self.rescuer + walk * min(1.0, SYNTHETIC_RESCUER_WALK_CM / max(float(np.linalg.norm(walk)), 1e-9))
+        # The rescuer first walks to stand in front of the camera; once seen, it follows and never steps away from
+        # the drone, so the guide's last measure stays an upper bound.
+        self.following |= seen
+        away = self.rescuer - self.position
+        if self.following and np.linalg.norm(away) > np.linalg.norm(offset):
+            self.rescuer = self.position + away * np.linalg.norm(offset) / np.linalg.norm(away)
+        return rescuer
+
     def take_photo(self) -> np.ndarray:
         raise NotImplementedError("The synthetic drone sees by casting rays; use see()")
 
     def get_state(self) -> dict:
-        return {"yaw_deg": self.yaw_deg, "pitch_deg": 0.0, "height_cm": SYNTHETIC_HEIGHT_CM, "battery_pct": 100.0}
+        return {"yaw_deg": self.yaw_deg, "pitch_deg": 0.0, "height_cm": self.height_cm, "battery_pct": 100.0}
 
     def _disconnect(self) -> None:
         pass
@@ -475,9 +525,10 @@ class SyntheticDrone(DroneInterface):
 class Explorer:
     """The EXPLORING phase: stops, grid, choice of the next move, and the flight back to take-off."""
 
-    def __init__(self, drone: DroneInterface, see, clock, fov: dict[str, float], map_link: MapLink, room: np.ndarray | None) -> None:
+    def __init__(self, drone: DroneInterface, see, clock, fov: dict[str, float], map_link: MapLink, room: np.ndarray | None,
+                 guide: Guide | None = None) -> None:
         self.drone, self.see, self.clock, self.fov, self.map = drone, see, clock, fov, map_link
-        self.room = room
+        self.room, self.guide = room, guide
         self.grid = Grid()
         self.position = np.zeros(2)
         self.yaw_deg = 0.0
@@ -501,8 +552,9 @@ class Explorer:
         reply = self.drone.send(command)
         if reply != "ok":
             raise RuntimeError(f"{command}: {reply}")
-        if command.startswith("forward"):
-            end = self.position + float(command.split()[1]) * direction(self.yaw_deg)
+        name, _, value = command.partition(" ")
+        if name in ("forward", "back"):
+            end = self.position + (1.0 if name == "forward" else -1.0) * float(value) * direction(self.yaw_deg)
             self.grid.add_trail(self.position, end)
             self.position = end
         self.read_state()
@@ -618,9 +670,9 @@ class Explorer:
                 return True
         return False
 
-    def fly_path(self, path: list[tuple[int, int]]) -> None:
-        """Fly an A* path as straight legs of at most one step. The path only crosses floor already seen
-        safe or flown, so the legs need no new photo."""
+    def legs(self, path: list[tuple[int, int]]):
+        """Yield where each straight leg of an A* path ends, each at most one step from where the drone is when
+        it starts it. The path only crosses floor already seen safe or flown, so the legs need no new photo."""
         passable = self.grid.passable(self.grid.safe_area(), self.position)
         points = [self.grid.centre(*cell) for cell in path]
         index = 0
@@ -629,9 +681,13 @@ class Explorer:
             while (target + 1 < len(points) and np.linalg.norm(points[target + 1] - self.position) <= STEP_LIMIT_CM
                    and segment_is_passable(self.grid, passable, self.position, points[target + 1])):
                 target += 1
-            offset = points[target] - self.position
-            distance = float(np.linalg.norm(offset))
             index = target
+            yield points[target]
+
+    def fly_path(self, path: list[tuple[int, int]]) -> None:
+        for target in self.legs(path):
+            offset = target - self.position
+            distance = float(np.linalg.norm(offset))
             if distance < MIN_FORWARD_CM:
                 continue
             self.turn(math.degrees(math.atan2(offset[0], offset[1])) - self.yaw_deg)
@@ -660,12 +716,24 @@ class Explorer:
             return True
         return False
 
+    def path_to(self, point: np.ndarray) -> list[tuple[int, int]] | None:
+        """A* path over safe floor and the trail to the reachable cell nearest a point, or None if the drone's
+        own cell is not passable."""
+        passable = self.grid.passable(self.grid.safe_area(), self.position)
+        start = tuple(int(v[0]) for v in self.grid.index(self.position)[:2])
+        if not passable[start]:
+            return None
+        # Only the cells connected to the drone's: the nearest passable cell may lie beyond a wall.
+        _, labels = cv2.connectedComponents(passable.astype(np.uint8), connectivity=8)
+        reachable = np.argwhere(labels == labels[start])
+        row, column, _ = self.grid.index(point)
+        goal = reachable[np.argmin(np.hypot(reachable[:, 0] - row[0], reachable[:, 1] - column[0]))]
+        return astar(passable, start, (int(goal[0]), int(goal[1])))
+
     def return_home(self) -> float | None:
         """Fly back to take-off over safe floor and the trail, which always leads back to the pad.
         Returns the distance left to the pad, or None when there is no path."""
-        start = tuple(int(v[0]) for v in self.grid.index(self.position)[:2])
-        pad = tuple(int(v[0]) for v in self.grid.index(np.zeros(2))[:2])
-        path = astar(self.grid.passable(self.grid.safe_area(), self.position), start, pad)
+        path = self.path_to(np.zeros(2))
         if path is None:
             return None
         self.fly_path(path)
@@ -715,6 +783,8 @@ class Explorer:
         reason = "error"
         try:
             reason, outcome = self.fly()
+            if reason == "back_at_start" and self.victims and self.guide is not None:
+                reason, outcome = self.guide.run(self)
             return f"{reason}, {outcome}"
         except KeyboardInterrupt:
             reason = "user_stop"
@@ -778,16 +848,18 @@ def main() -> None:
     if args.synthetic:
         drone = SyntheticDrone(camera_matrix)
         see, clock = drone.see, lambda: drone.clock_s
+        guide = Guide(drone.find_rescuer, camera_matrix)
         room = np.array(CLASSROOM_FLOOR_CM, float) - CLASSROOM_TAKEOFF_CM
     else:
         drone = UnityDrone(args.sim) if args.sim else TelloDrone()
         start = time.monotonic()
         eyes = Eyes(camera_matrix, VictimDetector(camera_matrix))
         see, clock = (lambda: eyes.look(drone.take_photo())), (lambda: time.monotonic() - start)
+        guide = Guide(lambda: find_rescuer(drone.take_photo(), camera_matrix), camera_matrix)
 
     session = datetime.now().strftime("%Y%m%d_%H%M%S")
     map_link = MapLink(session, args.map)
-    explorer = Explorer(drone, see, clock, camera_fov(camera_matrix), map_link, room)
+    explorer = Explorer(drone, see, clock, camera_fov(camera_matrix), map_link, room, guide)
     try:
         result = explorer.run(session)
     finally:

@@ -9,14 +9,15 @@ import explorer
 TAKEOFFS_CM = [(60, 60), (415, 60), (230, 430), (60, 480), (420, 380)]
 
 
-def synthetic_mission(camera_matrix, monkeypatch, takeoff_cm=(60, 60)):
-    """The setup of explorer.py --synthetic, from the given take-off pad."""
+def synthetic_mission(camera_matrix, monkeypatch, takeoff_cm=(60, 60), guided=False):
+    """The setup of explorer.py --synthetic, from the given take-off pad; without guided, it stops at the pad."""
     monkeypatch.setattr(explorer, "CLASSROOM_TAKEOFF_CM", takeoff_cm)
     drone = explorer.SyntheticDrone(camera_matrix)
     room = np.array(explorer.CLASSROOM_FLOOR_CM, float) - takeoff_cm
     map_link = explorer.MapLink("test", None)
+    guide = explorer.Guide(drone.find_rescuer, camera_matrix) if guided else None
     exploration = explorer.Explorer(drone, drone.see, lambda: drone.clock_s,
-                                    explorer.camera_fov(camera_matrix), map_link, room)
+                                    explorer.camera_fov(camera_matrix), map_link, room, guide)
     return drone, map_link, exploration
 
 
