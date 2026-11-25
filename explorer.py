@@ -77,7 +77,7 @@ CLASSROOM_FLOOR_CM = [(0, 0), (120, 0), (120, 310), (370, 310), (370, 0), (460, 
 CLASSROOM_TAKEOFF_CM = (60, 60)
 # Where the simulator lays its victim (ClassroomLayout.Victim, room frame): the body's centre and the heading it
 # points along. 170 x 50 cm is a lying adult.
-CLASSROOM_VICTIMS = [((360.0, 470.0), 90.0)]
+CLASSROOM_VICTIMS = [((360.0, 530.0), 90.0)]
 VICTIM_BODY_CM = (170.0, 50.0)
 # YOLO found every class victim up to 3 m away; the synthetic drone sees them a little further, as the simulator would.
 SYNTHETIC_VICTIM_RANGE_CM = 400.0

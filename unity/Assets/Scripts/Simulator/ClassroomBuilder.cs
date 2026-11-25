@@ -9,7 +9,6 @@ namespace SkyLead.Simulator
         public Material Wall;
         public Material Tables;
         public Material VictimShirt;
-        public Material RescuerShirt;
         public Material Trousers;
         public Material Shoes;
         public Material Hair;
@@ -75,7 +74,6 @@ namespace SkyLead.Simulator
             Box("Tables Block", new Vector3(tablesMin.x, tablesMin.y, 0f), new Vector3(tablesMax.x, tablesMax.y, ceiling), look.Tables, room.transform);
 
             Person("Victim", ClassroomLayout.Victim, lying: true, look.VictimShirt, look, room.transform);
-            Person("Rescuer", ClassroomLayout.Rescuer, lying: false, look.RescuerShirt, look, room.transform);
             return room;
         }
 

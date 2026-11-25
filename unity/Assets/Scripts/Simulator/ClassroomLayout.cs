@@ -48,13 +48,11 @@ namespace SkyLead.Simulator
         // docs/simulator.md: inside the 76-83 cm the real drone holds.
         public const float TakeOffHeightCm = 80f;
 
-        // At the far end of the top band from the take-off pad, so finding it takes the whole exploration. Not in an arm:
-        // a lying person (about 170 x 50 cm) would block it, and the right arm leaves the drone only a 42 cm lane.
-        public static readonly PersonPlacement Victim = new(360f, 470f, 90f);
-
-        // Waits behind the drone at the take-off pad, facing it, out of the camera's view while it explores: the drone
-        // finds the rescuer when it comes back and turns round, then leads the way to the victim.
-        public static readonly PersonPlacement Rescuer = new(60f, 20f, 0f);
+        // At the far end of the top band from the take-off pad, so finding it takes the whole exploration, and lying
+        // along its back wall, 5 cm off it (half its 50 cm width plus the gap): out in the band, the body covered the
+        // tiles the drone measures the floor with, and it spent many photos there without a reference tile. Not in an
+        // arm: a lying person (about 170 x 50 cm) would block it, and the right arm leaves the drone only a 42 cm lane.
+        public static readonly PersonPlacement Victim = new(360f, 530f, 90f);
 
         /// <summary>Room cm to Unity metres: Unity has y up, so the room's (x, y, z) becomes (x, z, y), as in the map.</summary>
         public static Vector3 ToUnity(float xCm, float yCm, float zCm) => new Vector3(xCm, zCm, yCm) / 100f;

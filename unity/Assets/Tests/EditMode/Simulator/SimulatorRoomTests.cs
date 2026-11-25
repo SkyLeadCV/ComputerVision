@@ -73,8 +73,7 @@ namespace SkyLead.Simulator.Tests
             Assert.AreEqual(500f, FlightDistanceCm(pad, 0f), 0.5f, "forward to the top wall");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 90f), 0.5f, "right to the tables block");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 270f), 0.5f, "left to the wall");
-            // The rescuer waits right behind the pad, before the wall.
-            Assert.Less(FlightDistanceCm(pad, 180f), 59f, "back into the rescuer");
+            Assert.AreEqual(60f, FlightDistanceCm(pad, 180f), 0.5f, "back to the bottom wall");
             // The right arm's lane: from its middle, up the arm and past the tables into the top band.
             Assert.AreEqual(559.5f, FlightDistanceCm(new Vector2(415f, 0.5f), 0f), 0.5f, "up the right arm");
         }
@@ -91,15 +90,6 @@ namespace SkyLead.Simulator.Tests
             Assert.IsTrue(Physics.Raycast(ClassroomLayout.ToUnity(victim.x, victim.y, FlightHeightCm), Vector3.down, out RaycastHit hit));
             Assert.AreEqual("Victim", PersonOf(hit.collider.transform).name);
             Assert.Less(hit.point.y * 100f, 30f, "lying low");
-        }
-
-        [Test]
-        public void TheRescuerWaitsBehindTheTakeOffPad()
-        {
-            room = ClassroomBuilder.Build(default);
-            float padY = ClassroomLayout.TakeOffPadCm.y;
-            foreach (Renderer part in room.transform.Find("Rescuer").GetComponentsInChildren<Renderer>())
-                Assert.Less(part.bounds.max.z * 100f, padY, $"{part.name} behind the drone, out of the camera's view");
         }
 
         [Test]

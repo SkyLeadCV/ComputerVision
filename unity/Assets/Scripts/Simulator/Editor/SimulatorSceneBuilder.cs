@@ -31,7 +31,6 @@ namespace SkyLead.Simulator.Editor
         static readonly Color TablesColor = new(0.85f, 0.85f, 0.85f);
         // Saturated colours far from the floor's hue, so people never pass for floor.
         static readonly Color VictimShirtColor = new(0.15f, 0.25f, 0.55f);
-        static readonly Color RescuerShirtColor = new(0.70f, 0.12f, 0.12f);
         // A dark neutral grey: no hue and too dark for the floor threshold.
         static readonly Color TrousersColor = new(0.22f, 0.22f, 0.22f);
         static readonly Color ShoesColor = new(0.10f, 0.10f, 0.10f);
@@ -67,7 +66,6 @@ namespace SkyLead.Simulator.Editor
                 Wall = LitMaterial("Wall", WallColor),
                 Tables = LitMaterial("Tables", TablesColor),
                 VictimShirt = LitMaterial("VictimShirt", VictimShirtColor),
-                RescuerShirt = LitMaterial("RescuerShirt", RescuerShirtColor),
                 Trousers = LitMaterial("Trousers", TrousersColor),
                 Shoes = LitMaterial("Shoes", ShoesColor),
                 Hair = LitMaterial("Hair", HairColor),
