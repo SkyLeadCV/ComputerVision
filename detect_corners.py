@@ -23,9 +23,13 @@ JOINT_MERGE_DISTANCE_PX = 10
 MIN_FAMILY_ANGLE_RAD = np.deg2rad(80)
 
 # Joint lines are infinite, so an intersection can land where no joint was seen
-# (behind furniture or off the floor). A side must lie on edge pixels along at least
-# this fraction of its length for the tile outline to count as observed.
+# (behind furniture or off the floor). Three sides must lie on edge pixels along at least
+# this fraction of their length for the tile outline to count as observed.
 MIN_SIDE_EDGE_COVERAGE = 0.6
+# One side may still be mostly hidden by an object or barely marked: the corners come from the joint lines, not from
+# that side's pixels, so the tile stays where it is. In the first real explorations such tiles gave the camera
+# height within 4 cm of the drone's own sensor, as the others do.
+MIN_WORST_SIDE_EDGE_COVERAGE = 0.25
 SIDE_SAMPLE_COUNT = 50
 # Allows ~3 px between a fitted joint line and the edge pixels it came from.
 EDGE_TOLERANCE_KERNEL = np.ones((7, 7), np.uint8)
@@ -138,7 +142,8 @@ def is_valid_tile(
         return False
 
     sides = list(zip(corners, np.roll(corners, -1, axis=0)))
-    if min(edge_coverage(start, end, edges) for start, end in sides) < MIN_SIDE_EDGE_COVERAGE:
+    worst, second_worst, *_ = sorted(edge_coverage(start, end, edges) for start, end in sides)
+    if worst < MIN_WORST_SIDE_EDGE_COVERAGE or second_worst < MIN_SIDE_EDGE_COVERAGE:
         return False
 
     floor_corners = rectify(corners, inverse_camera_matrix, basis)

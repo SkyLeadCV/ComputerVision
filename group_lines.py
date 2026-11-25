@@ -65,6 +65,20 @@ def lies_near_horizon(vanishing_point: np.ndarray, image_size: tuple[int, int]) 
     )
 
 
+def is_crossing_on_floor(vanishing_point: np.ndarray, segments: np.ndarray, image_size: tuple[int, int]) -> bool:
+    """A point inside the image and below some of its segments: where joints cross on the floor, not where they vanish.
+
+    Every line of both joint families passes through such a crossing, so it can outvote the true vanishing points
+    and mix the two families, as in the first real explorations with the joints seen diagonally. A true vanishing
+    point inside the image lies on the horizon, above all the floor. Far ones are left alone: a camera held with some
+    roll puts the far end of the horizon below the image's floor rows.
+    """
+    width, height = image_size
+    x, y, w = vanishing_point
+    inside = 0 <= x <= w * width and 0 <= y <= w * height
+    return bool(inside and y > w * segments[:, [1, 3]].min())
+
+
 def find_dominant_family(
     segments: np.ndarray, image_size: tuple[int, int]
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
@@ -87,6 +101,8 @@ def find_dominant_family(
             continue
 
         inliers = angular_errors(segments, vanishing_point) < ANGULAR_TOLERANCE_RAD
+        if inliers.any() and is_crossing_on_floor(vanishing_point, segments[inliers], image_size):
+            continue
         # Weighted by length so a joint broken into several short segments does not
         # outvote one detected as a single long segment.
         support = lengths[inliers].sum()
