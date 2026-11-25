@@ -580,6 +580,8 @@ class Explorer:
         self.grid = Grid()
         self.position = np.zeros(2)
         self.yaw_deg = 0.0
+        # The Tello counts yaw from where it was switched on, not from take-off (124° on the first exploration).
+        self.takeoff_yaw_deg = 0.0
         self.state = {}
         self.blind_zone_cm = STEP_LIMIT_CM
         self.stop_positions: list[np.ndarray] = []
@@ -593,7 +595,7 @@ class Explorer:
 
     def read_state(self) -> None:
         self.state = self.drone.get_state()
-        self.yaw_deg = self.state["yaw_deg"]
+        self.yaw_deg = wrap_deg(self.state["yaw_deg"] - self.takeoff_yaw_deg)
 
     def command(self, command: str) -> None:
         start = self.pose()
@@ -849,6 +851,8 @@ class Explorer:
             reply = self.drone.send(command)
             if reply != "ok":
                 raise RuntimeError(f"{command}: {reply}")
+        # docs/protocol.md measures yaw from take-off.
+        self.takeoff_yaw_deg = self.drone.get_state()["yaw_deg"]
         self.read_state()
 
         reason = "back_at_start"
