@@ -11,6 +11,8 @@ namespace SkyLead.Simulator
         public Material VictimShirt;
         public Material RescuerShirt;
         public Material Trousers;
+        public Material Shoes;
+        public Material Hair;
         public Material Skin;
     }
 
@@ -22,22 +24,39 @@ namespace SkyLead.Simulator
     {
         const float WallThicknessCm = 10f;
 
-        // An adult of about 1.70 m, with the legs touching so nothing passes between them. Each part is (centre, size) in cm, standing with the feet at 0 and the face
-        // towards +z; a capsule's size is its diameter across and its full length along y.
-        static readonly (PrimitiveType shape, string name, Vector3 centreCm, Vector3 sizeCm, Garment garment)[] BodyParts =
+        // An adult of about 1.70 m with an average build: limbs in two segments that taper, a neck, hips, hands and feet,
+        // so the figure reads as a person and not as a stack of pills. Each part is (centre, size, tilt) in cm and
+        // degrees, standing with the feet at 0 and the face towards +z; a capsule's size is its diameter across and its
+        // full length along its axis, which the tilt turns away from y. The arms hang slightly away from the body, and the
+        // thighs touch, so nothing passes between them at the drone's flight height.
+        static readonly (PrimitiveType shape, string name, Vector3 centreCm, Vector3 sizeCm, Vector3 tiltDeg, Garment garment)[] BodyParts =
         {
-            (PrimitiveType.Sphere, "Head", new(0f, 157f, 0f), new(21f, 23f, 22f), Garment.Skin),
-            (PrimitiveType.Capsule, "Torso", new(0f, 120f, 0f), new(34f, 58f, 20f), Garment.Shirt),
-            (PrimitiveType.Capsule, "Left Arm", new(-22f, 112f, 0f), new(10f, 66f, 10f), Garment.Shirt),
-            (PrimitiveType.Capsule, "Right Arm", new(22f, 112f, 0f), new(10f, 66f, 10f), Garment.Shirt),
-            (PrimitiveType.Capsule, "Left Leg", new(-8f, 47f, 0f), new(16f, 94f, 16f), Garment.Trousers),
-            (PrimitiveType.Capsule, "Right Leg", new(8f, 47f, 0f), new(16f, 94f, 16f), Garment.Trousers),
+            (PrimitiveType.Sphere, "Head", new(0f, 158f, 0f), new(16f, 22f, 19f), Vector3.zero, Garment.Skin),
+            // A cap over the top and back of the head, leaving the face clear.
+            (PrimitiveType.Sphere, "Hair", new(0f, 162f, -2f), new(17.5f, 17f, 20f), Vector3.zero, Garment.Hair),
+            (PrimitiveType.Capsule, "Neck", new(0f, 145f, -1f), new(10f, 12f, 10f), Vector3.zero, Garment.Skin),
+            (PrimitiveType.Capsule, "Chest", new(0f, 127f, 0f), new(33f, 38f, 19f), Vector3.zero, Garment.Shirt),
+            (PrimitiveType.Capsule, "Waist", new(0f, 104f, 0f), new(27f, 22f, 17f), Vector3.zero, Garment.Shirt),
+            // Lying across: the capsule's length is the hips' width.
+            (PrimitiveType.Capsule, "Hips", new(0f, 92f, 0f), new(18f, 32f, 18f), new(0f, 0f, 90f), Garment.Trousers),
+            (PrimitiveType.Capsule, "Left Upper Arm", new(-20f, 125f, 0f), new(9f, 30f, 9f), new(0f, 0f, -6f), Garment.Shirt),
+            (PrimitiveType.Capsule, "Right Upper Arm", new(20f, 125f, 0f), new(9f, 30f, 9f), new(0f, 0f, 6f), Garment.Shirt),
+            (PrimitiveType.Capsule, "Left Forearm", new(-22f, 98f, 2f), new(7.5f, 28f, 7.5f), new(0f, 0f, -4f), Garment.Shirt),
+            (PrimitiveType.Capsule, "Right Forearm", new(22f, 98f, 2f), new(7.5f, 28f, 7.5f), new(0f, 0f, 4f), Garment.Shirt),
+            (PrimitiveType.Sphere, "Left Hand", new(-23f, 80f, 3f), new(5f, 10f, 8f), Vector3.zero, Garment.Skin),
+            (PrimitiveType.Sphere, "Right Hand", new(23f, 80f, 3f), new(5f, 10f, 8f), Vector3.zero, Garment.Skin),
+            (PrimitiveType.Capsule, "Left Thigh", new(-7.5f, 66f, 0f), new(15f, 46f, 15f), Vector3.zero, Garment.Trousers),
+            (PrimitiveType.Capsule, "Right Thigh", new(7.5f, 66f, 0f), new(15f, 46f, 15f), Vector3.zero, Garment.Trousers),
+            (PrimitiveType.Capsule, "Left Shin", new(-7.5f, 26f, -1f), new(10f, 44f, 10f), Vector3.zero, Garment.Trousers),
+            (PrimitiveType.Capsule, "Right Shin", new(7.5f, 26f, -1f), new(10f, 44f, 10f), Vector3.zero, Garment.Trousers),
+            (PrimitiveType.Capsule, "Left Foot", new(-7.5f, 4f, 5f), new(9f, 25f, 7f), new(90f, 0f, 0f), Garment.Shoes),
+            (PrimitiveType.Capsule, "Right Foot", new(7.5f, 4f, 5f), new(9f, 25f, 7f), new(90f, 0f, 0f), Garment.Shoes),
         };
-        const float StandingHeightCm = 168f;
-        // Lying on the back, the torso's half depth lifts the body off the floor.
-        const float LyingLiftCm = 10f;
+        const float StandingHeightCm = 169f;
+        // Lying on the back, the chest's half depth lifts the body off the floor.
+        const float LyingLiftCm = 9.5f;
 
-        enum Garment { Skin, Shirt, Trousers }
+        enum Garment { Skin, Hair, Shirt, Trousers, Shoes }
 
         public static GameObject Build(ClassroomLook look)
         {
@@ -105,12 +124,12 @@ namespace SkyLead.Simulator
                 body.localPosition = (body.localRotation * new Vector3(0f, -StandingHeightCm / 2f, 0f) + Vector3.up * LyingLiftCm) / 100f;
             }
 
-            foreach (var (shape, partName, centreCm, sizeCm, garment) in BodyParts)
+            foreach (var (shape, partName, centreCm, sizeCm, tiltDeg, garment) in BodyParts)
             {
                 var part = GameObject.CreatePrimitive(shape);
                 part.name = partName;
                 part.transform.SetParent(body, false);
-                part.transform.localPosition = centreCm / 100f;
+                part.transform.SetLocalPositionAndRotation(centreCm / 100f, Quaternion.Euler(tiltDeg));
                 // A capsule primitive is 2 units long, so its length scale is half the length.
                 Vector3 scale = shape == PrimitiveType.Capsule ? new Vector3(sizeCm.x, sizeCm.y / 2f, sizeCm.z) : sizeCm;
                 part.transform.localScale = scale / 100f;
@@ -118,6 +137,8 @@ namespace SkyLead.Simulator
                 {
                     Garment.Skin => look.Skin,
                     Garment.Shirt => shirt,
+                    Garment.Shoes => look.Shoes,
+                    Garment.Hair => look.Hair,
                     _ => look.Trousers,
                 };
             }
