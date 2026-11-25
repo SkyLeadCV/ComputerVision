@@ -21,7 +21,7 @@ namespace SkyLead.Map
         [Tooltip("Seconds to wait for a live brain before replaying the newest recording in flights/.")]
         [SerializeField, Min(0f)] float liveWaitS = 5f;
 
-        MapServer server;
+        LineServer server;
         int seenConnections;
         bool replayTried;
 
@@ -81,8 +81,8 @@ namespace SkyLead.Map
 
         void Start()
         {
-            IPAddress address = string.IsNullOrEmpty(listenAddress) ? MapServer.TailscaleOrLoopback() : IPAddress.Parse(listenAddress);
-            server = new MapServer(address, port);
+            IPAddress address = string.IsNullOrEmpty(listenAddress) ? LineServer.TailscaleOrLoopback() : IPAddress.Parse(listenAddress);
+            server = new LineServer(address, port);
             server.Start();
             Debug.Log($"Map listening on {server.Endpoint}");
         }

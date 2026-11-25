@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace SkyLead.Simulator
 {
@@ -24,7 +25,41 @@ namespace SkyLead.Simulator
         // Smooths the tile joints' edges as a real lens does; aliased joints break into short Hough segments.
         const int Antialiasing = 4;
 
-        void OnEnable() => Configure();
+        [Tooltip("Ambient light of the classroom. The photos are tuned for it, and the map shown with the simulator has its own.")]
+        [SerializeField] Color ambientLight = new(0.6f, 0.6f, 0.6f);
+
+        Color sceneAmbient;
+
+        /// <summary>When the last photo was taken, in unscaled seconds, so the onboard view can flash.</summary>
+        public float LastPhotoTime { get; private set; } = float.NegativeInfinity;
+
+        void OnEnable()
+        {
+            Configure();
+            RenderPipelineManager.beginCameraRendering += BeginRendering;
+            RenderPipelineManager.endCameraRendering += EndRendering;
+        }
+
+        void OnDisable()
+        {
+            RenderPipelineManager.beginCameraRendering -= BeginRendering;
+            RenderPipelineManager.endCameraRendering -= EndRendering;
+        }
+
+        // Ambient light is one setting for the whole scene, so it is swapped in only while this camera renders.
+        void BeginRendering(ScriptableRenderContext context, Camera rendering)
+        {
+            if (rendering.gameObject != gameObject)
+                return;
+            sceneAmbient = RenderSettings.ambientLight;
+            RenderSettings.ambientLight = ambientLight;
+        }
+
+        void EndRendering(ScriptableRenderContext context, Camera rendering)
+        {
+            if (rendering.gameObject == gameObject)
+                RenderSettings.ambientLight = sceneAmbient;
+        }
 
         /// <summary>Apply the calibrated projection and the camera tilt. Unity does not serialize a custom projection.</summary>
         public void Configure()
@@ -64,7 +99,11 @@ namespace SkyLead.Simulator
             };
             RenderTexture previousTarget = view.targetTexture;
             view.targetTexture = target;
+            Color previousAmbient = RenderSettings.ambientLight;
+            RenderSettings.ambientLight = ambientLight;
             view.Render();
+            RenderSettings.ambientLight = previousAmbient;
+            LastPhotoTime = Time.unscaledTime;
 
             RenderTexture previousActive = RenderTexture.active;
             RenderTexture.active = target;

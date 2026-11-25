@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using static SkyLead.Map.HudStyle;
 
 namespace SkyLead.Map
 {
@@ -19,21 +20,12 @@ namespace SkyLead.Map
         [Tooltip("Shows or hides every text on the map, so the view can be recorded for the presentation without it.")]
         [SerializeField] Key toggleKey = Key.H;
 
-        // Laid out for 1080 p and scaled to the screen, so the HUD keeps its proportions at any resolution.
-        const float ReferenceHeightPx = 1080f;
         const float MarginPx = 28f;
         const float PanelWidthPx = 420f;
         const float PaddingPx = 18f;
         const float RowHeightPx = 30f;
         const float LabelWidthPx = 120f;
         const float BracketPx = 36f;
-
-        static readonly Color Cyan = new(0.35f, 0.95f, 0.9f);
-        static readonly Color Dim = new(0.55f, 0.68f, 0.72f);
-        static readonly Color Panel = new(0.02f, 0.05f, 0.07f, 0.82f);
-        static readonly Color Amber = new(1f, 0.69f, 0.13f);
-        static readonly Color Red = new(1f, 0.25f, 0.25f);
-        static readonly Color Green = new(0.3f, 0.95f, 0.45f);
 
         string mode;
         float personDistanceCm = -1f;
@@ -194,14 +186,6 @@ namespace SkyLead.Map
                 Fill(new Rect(dx > 0 ? cx : cx - BracketPx, dy > 0 ? cy : cy - thickness, BracketPx, thickness), color);
                 Fill(new Rect(dx > 0 ? cx : cx - thickness, dy > 0 ? cy : cy - BracketPx, thickness, BracketPx), color);
             }
-        }
-
-        static void Fill(Rect rect, Color color)
-        {
-            Color previous = GUI.color;
-            GUI.color = color;
-            GUI.DrawTexture(rect, Texture2D.whiteTexture);
-            GUI.color = previous;
         }
 
         void CreateStyles()
