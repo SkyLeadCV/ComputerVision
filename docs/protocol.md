@@ -139,6 +139,8 @@ The current phase of the mission.
 
 - `reason`:
   - `back_at_start`: the mission finished and the drone flew back to take-off;
+  - `at_victim`: the drone guided the rescuer to the victim and landed next to it;
+  - `rescuer_lost`: the rescuer was not seen within reach for about a minute, so the drone landed where it was;
   - `low_battery`: the battery ran low and the drone flew back to take-off;
   - `no_path_home`: no path back to take-off was found, so the drone landed where it was;
   - `user_stop`: stopped by hand on the brain (Ctrl+C);
