@@ -87,7 +87,7 @@ pitch:-3;roll:0;yaw:90;tof:82;bat:100;
 | `bat` | % | Battery. |
 
 The real drone sends the same packet every 100 ms over UDP and `djitellopy` parses it, so `TelloDrone` and `UnityDrone` build `get_state()` from the same fields.
-The signs of the real drone's `pitch` and `yaw` still have to be checked in the first real flight. If they differ, `TelloDrone` converts them and this document does not change.
+The signs of the real drone's `pitch` and `yaw` are the ones above, checked on the Tello: `yaw` went from 0 to 87 after `cw 90` in the first flight, and `pitch` reads positive with the nose lifted by hand and negative with it lowered. `TelloDrone` passes both through unchanged.
 
 ## 7. Example session
 
