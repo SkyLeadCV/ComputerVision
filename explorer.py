@@ -6,6 +6,9 @@ always towards floor it has not seen yet. A fresh photo confirms the move before
 reachable floor is left unseen, it returns to the take-off pad along an A* path over seen floor and, if it
 found a victim, guides the rescuer there (guide.py).
 
+Every decision goes to flights/<session>/decisions.jsonl with the numbers behind it, and in words to the terminal;
+replay_flight.py repeats a recorded real flight to rebuild them.
+
 Run with --synthetic it flies a stand-in drone inside the measured classroom (docs/classroom.md),
 seeing by casting rays instead of taking photos, so the logic can be checked without a drone.
 """
@@ -361,6 +364,39 @@ def nearest_point(polygon: np.ndarray, point: np.ndarray) -> np.ndarray:
     return candidates[np.argmin(np.linalg.norm(candidates - point, axis=1))]
 
 
+def plain(value):
+    """numpy values as plain Python ones, for JSON."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"{type(value).__name__} is not JSON serializable")
+
+
+class DecisionLog:
+    """Why the drone did what it did: one JSON line per decision with every number it was based on, in
+    flights/<session>/decisions.jsonl, and the same decision in words on the terminal."""
+
+    def __init__(self, path: Path | None, clock) -> None:
+        self.clock = clock
+        self.file = None
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.file = path.open("w", encoding="utf-8")
+
+    def note(self, event: str, text: str, **data) -> None:
+        t = round(float(self.clock()), 2)
+        print(f"[{t:7.1f} s] {event:<9} {text}")
+        if self.file is not None:
+            self.file.write(json.dumps({"t": t, "event": event, "text": text, **data}, default=plain) + "\n")
+            # A crash or Ctrl+C must not lose the last decisions, which are the ones that explain it.
+            self.file.flush()
+
+    def close(self) -> None:
+        if self.file is not None:
+            self.file.close()
+
+
 class FlightRecorder:
     """A drone that also keeps what the map never gets: every photo, and every command with its reply and the
     drone's state, in one folder per flight, to see afterwards why the drone did what it did."""
@@ -587,6 +623,7 @@ class Explorer:
         # Each known victim: its id and every map position it was seen at; the marker sits at their mean.
         self.victims: list[tuple[int, list[np.ndarray]]] = []
         self.output_dir = OUTPUT_DIR
+        self.log = DecisionLog(None, clock)
 
     def pose(self) -> dict:
         return {"x": round(float(self.position[0]), 1), "y": round(float(self.position[1]), 1), "yaw_deg": round(self.yaw_deg, 1)}
@@ -616,11 +653,15 @@ class Explorer:
     def look(self) -> FreeSpace | None:
         """Take a photo and add it to the grid and the map; a photo without a reference tile is retaken once."""
         free_space, victims = self.see()
+        self.note_photo(free_space, victims)
         if free_space is None:
             free_space, more = self.see()
+            self.note_photo(free_space, more, retake=True)
             victims = victims + more
         self.report_victims(victims)
         if free_space is None:
+            self.log.note("unknown", f"no tile in either photo at yaw {self.yaw_deg:.0f}: this direction stays unknown",
+                          yaw_deg=self.yaw_deg)
             return None
         rays = trusted_rays(free_space)
         self.grid.add_observation(self.position, self.yaw_deg, rays)
@@ -636,17 +677,44 @@ class Explorer:
         })
         return free_space
 
+    def note_photo(self, free_space: FreeSpace | None, victims: list[Victim], retake: bool = False) -> None:
+        """Everything the photo told the explorer, tied to its file by number when the flight is recorded."""
+        photo = getattr(self.drone, "photos", None)
+        name = f"photo {photo}" if photo else "photo"
+        found = [{"right_cm": v.floor_cm[0], "forward_cm": v.floor_cm[1], "confidence": v.confidence, "top_cm": v.top_cm}
+                 for v in victims]
+        common = dict(photo=photo, retake=retake, position=self.position, yaw_deg=self.yaw_deg, victims=found)
+        if free_space is None:
+            self.log.note("photo", f"{name} at yaw {self.yaw_deg:.0f}: no reference tile"
+                          + (", giving up on it" if retake else ", retaking it") + f"; {len(victims)} victims", **common)
+            return
+        ahead = int(np.argmin(np.abs(free_space.angle_deg)))
+        kinds = {name: int(np.sum(free_space.kind == kind)) for name, kind in
+                 (("obstacle", STOP_OBSTACLE), ("range", STOP_RANGE))}
+        self.log.note("photo", f"{name} at yaw {self.yaw_deg:.0f}: blind zone {np.median(free_space.entry_cm):.0f} cm, "
+                      f"ahead floor to {free_space.stop_cm[ahead]:.0f} cm, allowed {free_space.allowed_cm[ahead]:.0f} cm, "
+                      f"rays stopped by obstacles {kinds['obstacle']} of {len(free_space.angle_deg)}, "
+                      f"camera at {free_space.camera_height_cm:.0f} cm; {len(victims)} victims", **common,
+                      camera_height_cm=free_space.camera_height_cm, rays={
+                          "angle_deg": free_space.angle_deg, "entry_cm": free_space.entry_cm,
+                          "stop_cm": free_space.stop_cm, "kind": free_space.kind, "allowed_cm": free_space.allowed_cm})
+
     def report_victims(self, victims: list[Victim]) -> None:
         """Place each victim on the map, as a new one or as a known one if it lies within SAME_VICTIM_CM."""
         for victim in victims:
             right, forward = victim.floor_cm
             point = self.position + right * direction(self.yaw_deg + 90.0) + forward * direction(self.yaw_deg)
             known = next((entry for entry in self.victims if np.linalg.norm(np.mean(entry[1], axis=0) - point) < SAME_VICTIM_CM), None)
-            if known is None:
+            new = known is None
+            if new:
                 known = (len(self.victims) + 1, [])
                 self.victims.append(known)
             known[1].append(point)
             x, y = np.mean(known[1], axis=0)
+            self.log.note("victim", f"{'new' if new else 'known'} victim {known[0]} seen at ({point[0]:.0f}, {point[1]:.0f}), "
+                          f"confidence {victim.confidence:.2f}, top {victim.top_cm:.0f} cm; marker at ({x:.0f}, {y:.0f}) "
+                          f"from {len(known[1])} sightings", id=known[0], new=new, seen_at=point, marker=(x, y),
+                          confidence=victim.confidence, top_cm=victim.top_cm)
             self.map.send("victim", self.clock(), id=known[0], x=round(float(x), 1), y=round(float(y), 1),
                           confidence=round(victim.confidence, 2))
 
@@ -677,25 +745,49 @@ class Explorer:
         safe = self.grid.safe_area()
         reach = self.blind_zone_cm + STEP_LIMIT_CM
         right, ahead, left = [], [], []
+        verdicts = []
         for relative in range(-MAX_HEADING_DEG, MAX_HEADING_DEG + 1, HEADING_STEP_DEG):
             heading = centre_deg + relative
             clear = self.grid.clear_distance(safe, self.position, heading)
+            sector = "right" if relative > SIDE_SECTOR_DEG else "left" if relative < -SIDE_SECTOR_DEG else "ahead"
+            verdict = {"relative_deg": relative, "heading_deg": heading, "sector": sector, "clear_cm": clear}
+            verdicts.append(verdict)
             if clear < MIN_FORWARD_CM:
+                verdict["verdict"] = f"blocked: clear {clear:.0f} < {MIN_FORWARD_CM} cm"
                 continue
             arrival = self.position + clear * direction(heading)
             if self.revisits(arrival):
+                verdict["verdict"] = f"revisit: arrival within {REVISIT_CM:.0f} cm of an earlier stop"
                 continue
             new = self.grid.new_cells(arrival, heading, reach, self.sweep_half_fov())
+            verdict["new_cells"] = new
             if new < MIN_NEW_CELLS:
+                verdict["verdict"] = f"nothing new: {new} < {MIN_NEW_CELLS} unseen cells"
                 continue
             if relative > SIDE_SECTOR_DEG:
                 if clear >= STEP_LIMIT_CM:
                     right.append((-new, relative, clear))
+                    verdict["verdict"] = "valid"
+                else:
+                    verdict["verdict"] = f"right needs a whole step: clear {clear:.0f} < {STEP_LIMIT_CM} cm"
             elif relative < -SIDE_SECTOR_DEG:
                 left.append((-math.floor(clear / CELL_CM), abs(relative), -relative, relative, clear))
+                verdict["verdict"] = "valid"
             else:
                 ahead.append((-math.floor(clear / CELL_CM), abs(relative), -relative, relative, clear))
-        return [(r, c) for _, r, c in sorted(right)] + [(r, c) for *_, r, c in sorted(ahead)] + [(r, c) for *_, r, c in sorted(left)]
+                verdict["verdict"] = "valid"
+        options = [(r, c) for _, r, c in sorted(right)] + [(r, c) for *_, r, c in sorted(ahead)] + [(r, c) for *_, r, c in sorted(left)]
+        counts = {sector: sum(v["sector"] == sector and v["verdict"] == "valid" for v in verdicts) for sector in ("right", "ahead", "left")}
+        reasons = {}
+        for v in verdicts:
+            if v["verdict"] != "valid":
+                key = v["verdict"].split(":")[0]
+                reasons[key] = reasons.get(key, 0) + 1
+        best = f"best {options[0][0]:+.0f} deg, {options[0][1]:.0f} cm" if options else "no valid heading"
+        self.log.note("headings", f"from yaw {centre_deg:.0f}: valid right {counts['right']}, ahead {counts['ahead']}, "
+                      f"left {counts['left']}; rejected {reasons}; {best}", centre_deg=centre_deg, position=self.position,
+                      blind_zone_cm=self.blind_zone_cm, options=options, headings=verdicts)
+        return options
 
     def advance(self, centre_deg: float, options: list[tuple[float, float]]) -> bool:
         """Turn to the best option, confirm it with a fresh photo and fly; try the next one if it is not clear.
@@ -704,18 +796,31 @@ class Explorer:
         to that floor is clear by occlusion and allowed_cm rules beyond it. If a wall stands inside its
         blind zone, it cannot tell how far, and the grid, which saw that floor from farther away, rules.
         """
-        for relative, clear in options[:MAX_CONFIRMATIONS]:
+        for attempt, (relative, clear) in enumerate(options[:MAX_CONFIRMATIONS], 1):
             self.turn(centre_deg + relative - self.yaw_deg)
             photo = self.look()
             if photo is None:
+                self.log.note("confirm", f"option {attempt} ({relative:+.0f} deg): no tile to confirm it, next option",
+                              attempt=attempt, relative_deg=relative, grid_clear_cm=clear)
                 continue
             ahead = int(np.argmin(np.abs(photo.angle_deg)))
-            if photo.stop_cm[ahead] > photo.entry_cm[ahead]:
+            grid_clear = clear
+            sees_floor = bool(photo.stop_cm[ahead] > photo.entry_cm[ahead])
+            if sees_floor:
                 clear = min(clear, max(photo.allowed_cm[ahead], photo.entry_cm[ahead]))
             step = int(min(clear, STEP_LIMIT_CM, MAX_FORWARD_CM))
+            data = dict(attempt=attempt, relative_deg=relative, grid_clear_cm=grid_clear, photo_sees_floor=sees_floor,
+                        photo_entry_cm=photo.entry_cm[ahead], photo_stop_cm=photo.stop_cm[ahead],
+                        photo_allowed_cm=photo.allowed_cm[ahead], step_cm=step)
+            how = (f"photo sees floor to {photo.stop_cm[ahead]:.0f}, allows {photo.allowed_cm[ahead]:.0f}" if sees_floor
+                   else "photo sees no floor ahead (wall in its blind zone), the grid rules")
             if step >= MIN_FORWARD_CM:
+                self.log.note("confirm", f"option {attempt} ({relative:+.0f} deg): grid {grid_clear:.0f} cm, {how}: "
+                              f"forward {step}", **data)
                 self.command(f"forward {step}")
                 return True
+            self.log.note("confirm", f"option {attempt} ({relative:+.0f} deg): grid {grid_clear:.0f} cm, {how}: step "
+                          f"{step} < {MIN_FORWARD_CM} cm, next option", **data)
         return False
 
     def legs(self, path: list[tuple[int, int]]):
@@ -736,6 +841,9 @@ class Explorer:
         for target in self.legs(path):
             offset = target - self.position
             distance = float(np.linalg.norm(offset))
+            self.log.note("leg", f"leg to ({target[0]:.0f}, {target[1]:.0f}), {distance:.0f} cm"
+                          + (f": skipped, under {MIN_FORWARD_CM} cm" if distance < MIN_FORWARD_CM else ""),
+                          start=self.position, target=target, distance_cm=distance)
             if distance < MIN_FORWARD_CM:
                 continue
             self.turn(math.degrees(math.atan2(offset[0], offset[1])) - self.yaw_deg)
@@ -750,18 +858,30 @@ class Explorer:
         spots = [self.grid.centre(r, c) for r, c in zip(rows[::2], columns[::2])]
         spots.sort(key=lambda spot: np.linalg.norm(spot - self.position))
         start = tuple(int(v[0]) for v in self.grid.index(self.position)[:2])
+        skipped = {"revisit": 0, "nothing new": 0, "no path": 0}
         for spot in spots:
             if self.revisits(spot):
+                skipped["revisit"] += 1
                 continue
             best = max(FRONTIER_HEADINGS_DEG, key=lambda h: self.grid.new_cells(spot, h, reach, half_fov))
-            if self.grid.new_cells(spot, best, reach, half_fov) < MIN_NEW_CELLS:
+            new = self.grid.new_cells(spot, best, reach, half_fov)
+            if new < MIN_NEW_CELLS:
+                skipped["nothing new"] += 1
                 continue
             path = astar(self.grid.passable(safe, self.position), start, tuple(int(v[0]) for v in self.grid.index(spot)[:2]))
             if path is None:
+                skipped["no path"] += 1
                 continue
+            self.log.note("frontier", f"go to ({spot[0]:.0f}, {spot[1]:.0f}), {np.linalg.norm(spot - self.position):.0f} cm "
+                          f"away, facing {best} deg: {new} unseen cells; path {len(path)} cells; skipped {skipped} "
+                          f"of {len(spots)} safe spots", spot=spot, heading_deg=best, new_cells=new, path=path,
+                          skipped=skipped, spots=len(spots))
             self.fly_path(path)
             self.turn(best - self.yaw_deg)
             return True
+        self.log.note("frontier", f"none left: of {len(spots)} safe spots {skipped}; given up cells "
+                      f"{int(self.grid.given_up.sum())}, unknown cells near the explored area remain unreachable",
+                      skipped=skipped, spots=len(spots), given_up_cells=int(self.grid.given_up.sum()))
         return False
 
     def path_to(self, point: np.ndarray) -> list[tuple[int, int]] | None:
@@ -783,8 +903,12 @@ class Explorer:
         Returns the distance left to the pad, or None when there is no path."""
         path = self.path_to(np.zeros(2))
         if path is None:
+            self.log.note("home", "no path home: the drone's cell is not passable", position=self.position)
             return None
+        self.log.note("home", f"path home from ({self.position[0]:.0f}, {self.position[1]:.0f}): {len(path)} cells",
+                      position=self.position, path=path)
         self.fly_path(path)
+        self.log.note("home", f"{np.linalg.norm(self.position):.0f} cm from take-off", position=self.position)
         return float(np.linalg.norm(self.position))
 
     def draw(self, title: str, choice: tuple[float, float] | None = None) -> np.ndarray:
@@ -827,6 +951,7 @@ class Explorer:
                   "vfov_up_deg": round(self.fov["up_deg"], 1), "vfov_down_deg": round(self.fov["down_deg"], 1)}
         self.output_dir = OUTPUT_DIR / session
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.log = DecisionLog(FLIGHTS_DIR / session / "decisions.jsonl", self.clock)
         self.map.send("session_start", self.clock(), version=1, session=session, camera=camera,
                       drone_radius_cm=DRONE_RADIUS_CM, safety_margin_cm=SAFETY_MARGIN_CM)
         # Every way out of the mission closes the session, so the recording and the map never miss its end.
@@ -840,6 +965,8 @@ class Explorer:
             reason = "user_stop"
             raise
         finally:
+            self.log.note("end", f"session ends: {reason}", reason=reason, position=self.position, stops=self.stops)
+            self.log.close()
             self.map.send("session_end", self.clock(), reason=reason)
 
     def fly(self) -> tuple[str, str]:
@@ -850,20 +977,30 @@ class Explorer:
             if reply != "ok":
                 raise RuntimeError(f"{command}: {reply}")
         self.read_state()
+        self.log.note("takeoff", f"in the air: {self.state}", state=self.state)
 
         reason = "back_at_start"
         while self.stops < MAX_STOPS:
             if self.state["battery_pct"] < LOW_BATTERY_PCT:
                 reason = "low_battery"
+                self.log.note("explore", f"battery {self.state['battery_pct']:.0f} % < {LOW_BATTERY_PCT} %: going home",
+                              state=self.state)
                 break
             self.stops += 1
             self.stop_positions.append(self.position.copy())
+            self.log.note("stop", f"stop {self.stops} at ({self.position[0]:.0f}, {self.position[1]:.0f}), yaw "
+                          f"{self.yaw_deg:.0f}, height {self.state['height_cm']:.0f} cm, battery {self.state['battery_pct']:.0f} %",
+                          stop=self.stops, position=self.position, yaw_deg=self.yaw_deg, state=self.state)
             centre = self.sweep()
             # The three photos just covered these cells within reach and still could not see them.
-            self.grid.give_up(self.grid.unseen_in_view(self.position, centre, self.blind_zone_cm + STEP_LIMIT_CM, self.sweep_half_fov()))
+            unseen = self.grid.unseen_in_view(self.position, centre, self.blind_zone_cm + STEP_LIMIT_CM, self.sweep_half_fov())
+            self.grid.give_up(unseen)
+            self.log.note("give_up", f"{len(unseen)} cells in reach that the sweep could not see are given up",
+                          cells=len(unseen))
             options = self.candidates(centre)
             if not options:
                 # A dead end: look behind before deciding there is nothing left here.
+                self.log.note("dead_end", "no valid heading ahead: turning round to sweep behind")
                 self.turn(centre + 180 - self.yaw_deg)
                 centre = self.sweep()
                 options = self.candidates(centre)
@@ -872,7 +1009,10 @@ class Explorer:
             if options and self.advance(centre, options):
                 continue
             if not self.go_to_frontier():
+                self.log.note("explore", "nothing reachable left unseen: exploration ends")
                 break
+        else:
+            self.log.note("explore", f"{MAX_STOPS} stops reached: exploration ends")
 
         home = self.return_home()
         if home is None:
@@ -916,7 +1056,7 @@ def main() -> None:
     finally:
         drone.close()
         map_link.close()
-    print(f"{result}: {explorer.stops} stops, {len(explorer.victims)} victims, {map_link.seq} messages in {map_link.path}, grid images in {explorer.output_dir}/")
+    print(f"{result}: {explorer.stops} stops, {len(explorer.victims)} victims, {map_link.seq} messages in {map_link.path}, decisions in {FLIGHTS_DIR / session}/, grid images in {explorer.output_dir}/")
 
 
 if __name__ == "__main__":
