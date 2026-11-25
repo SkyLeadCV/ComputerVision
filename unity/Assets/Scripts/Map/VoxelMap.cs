@@ -6,15 +6,15 @@ namespace SkyLead.Map
     /// <summary>The excavated block: owns the voxel grid and one mesh per chunk, rebuilt only when it changes.</summary>
     public sealed class VoxelMap : MonoBehaviour
     {
-        // The measured classroom of docs/classroom.md: 460 x 560 cm with a 300 cm ceiling, and the take-off pad at
-        // room (60, 60), so in the protocol frame the room runs from (-60, -60) to (400, 500). The block keeps one
-        // voxel beyond each wall: a wall's face is painted in the voxel just behind the ray's stop, which would
-        // otherwise fall outside the grid and leave the room's walls undrawn.
+        // Centred on the take-off point and 16 m across, so it holds any flight in the classroom (7.2 m across its
+        // diagonal) wherever the drone takes off from and whichever way it faces. A block sized to the simulator's
+        // pad and heading dropped 87 % of what the first real explorations saw, which took off elsewhere. Height: the
+        // 300 cm ceiling. 160 x 160 x 30 voxels take 0.77 MB, and only the chunks that change are rebuilt.
         [Tooltip("Corner of the block with the lowest x and y, in cm from the take-off point (protocol frame).")]
-        [SerializeField] Vector2 originCm = new(-70f, -70f);
+        [SerializeField] Vector2 originCm = new(-800f, -800f);
 
         [Tooltip("Block size in 10 cm voxels along x (right), y (forward) and z (up).")]
-        [SerializeField] Vector3Int sizeVoxels = new(48, 58, 30);
+        [SerializeField] Vector3Int sizeVoxels = new(160, 160, 30);
 
         [Tooltip("Only what lies below this height is drawn, like a cut-away scale model. It changes no data.")]
         // Above the drone's 80 cm and the tables, so obstacles still show at the height that matters for flying.
@@ -36,6 +36,9 @@ namespace SkyLead.Map
 
         public VoxelGrid Grid { get; private set; }
 
+        /// <summary>Rays of this session whose floor ended outside the block, so their far end could not be drawn.</summary>
+        public int RaysOutside { get; private set; }
+
         public Vector2 OriginCm => originCm;
 
         public Vector3Int SizeVoxels => sizeVoxels;
@@ -51,6 +54,7 @@ namespace SkyLead.Map
                 return false;
             sessionName = session.session;
             Grid.Clear();
+            RaysOutside = 0;
             return true;
         }
 
@@ -79,10 +83,13 @@ namespace SkyLead.Map
                 partial.stop_cm[i] = Mathf.Lerp(rays.entry_cm[i], rays.stop_cm[i], progress);
                 partial.kind[i] = RayKind.TrustedRange;
             }
-            Observe(new Observation { pose = observation.pose, rays = partial });
+            Excavate(new Observation { pose = observation.pose, rays = partial });
         }
 
-        public void Observe(Observation observation)
+        public void Observe(Observation observation) => RaysOutside += Excavate(observation);
+
+        /// <summary>Excavate an observation and return how many of its rays ended outside the block.</summary>
+        int Excavate(Observation observation)
         {
             // The vertical field of view only arrives in session_start, and without it the fans cannot be drawn.
             if (fov == null)
@@ -90,9 +97,9 @@ namespace SkyLead.Map
                 if (!warnedNoSession)
                     Debug.LogWarning("Observation received before session_start; ignoring it.");
                 warnedNoSession = true;
-                return;
+                return 0;
             }
-            Excavator.Apply(Grid, observation, fov);
+            return Excavator.Apply(Grid, observation, fov);
         }
 
         /// <summary>The blocks belong to the 3D view; from above, the floor plan draws the map instead.</summary>

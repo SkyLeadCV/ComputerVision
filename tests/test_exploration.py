@@ -78,6 +78,17 @@ def test_a_missing_way_home_is_reported(camera_matrix, output_dirs, monkeypatch)
     assert recorded_messages(map_link)[-1]["reason"] == "no_path_home"
 
 
+def test_yaw_counts_from_take_off_whatever_the_drone_reports(camera_matrix, output_dirs, monkeypatch):
+    drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
+    # Like the Tello, report yaw from where it was switched on: 124° at take-off on the first exploration.
+    monkeypatch.setattr(drone, "yaw_deg", 124.0)
+    assert exploration.run("test").startswith("back_at_start")
+
+    observations = [message for message in recorded_messages(map_link) if message["type"] == "observation"]
+    assert observations[0]["pose"]["yaw_deg"] == 0.0
+    assert np.linalg.norm(drone.position) < explorer.MIN_FORWARD_CM
+
+
 def test_a_crash_is_kept_in_the_decision_log(camera_matrix, output_dirs, monkeypatch):
     drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
     monkeypatch.setattr(exploration, "see", lambda: 1 / 0)

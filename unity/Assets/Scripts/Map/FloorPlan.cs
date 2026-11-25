@@ -32,6 +32,11 @@ namespace SkyLead.Map
         const float BlindAlpha = 0.45f;
         const float SeenAlpha = 0.45f;
         const float EdgeAlpha = 0.8f;
+        // Before any photo the explored area is the take-off spot; afterwards, everything proven free so far. The grey
+        // unexplored ground reaches this far past it: enough to read as the map's surroundings, not the whole 16 m
+        // block, which would leave the explored part a speck in the middle.
+        const float StartHalfCm = 150f;
+        const float UnexploredMarginCm = 150f;
 
         readonly List<Vector3> floorVertices = new();
         readonly List<int> floorTriangles = new();
@@ -41,9 +46,16 @@ namespace SkyLead.Map
         GameObject walls;
         float scanOpacity = 1f;
         float scanTarget = 1f;
+        Mesh groundMesh;
+        Rect exploredCm = StartArea();
 
         /// <summary>Where each ray of the latest photo stopped, on the floor; a ray that saw no floor stays at the drone.</summary>
         public IReadOnlyList<Vector3> ScanRim => scanRim;
+
+        /// <summary>The floor proven free so far, and the take-off spot, in protocol cm: what the camera keeps in view.</summary>
+        public Rect ExploredCm => exploredCm;
+
+        static Rect StartArea() => Rect.MinMaxRect(-StartHalfCm, -StartHalfCm, StartHalfCm, StartHalfCm);
 
         public void Clear()
         {
@@ -55,6 +67,8 @@ namespace SkyLead.Map
             foreach (Mesh mesh in new[] { currentMesh, wallMesh, blindMesh, seenMesh })
                 mesh.Clear();
             leftEdge.positionCount = rightEdge.positionCount = 0;
+            exploredCm = StartArea();
+            DrawGround();
         }
 
         /// <summary>
@@ -128,6 +142,21 @@ namespace SkyLead.Map
             floorMesh.SetTriangles(floorTriangles, 0);
             floorMesh.RecalculateBounds();
             currentMesh.Clear();
+            foreach (Vector3 point in floorVertices.GetRange(first, floorVertices.Count - first))
+                exploredCm = Rect.MinMaxRect(Mathf.Min(exploredCm.xMin, point.x * 100f), Mathf.Min(exploredCm.yMin, point.z * 100f),
+                    Mathf.Max(exploredCm.xMax, point.x * 100f), Mathf.Max(exploredCm.yMax, point.z * 100f));
+            DrawGround();
+        }
+
+        /// <summary>The grey of unexplored ground around what has been explored, inside the voxel block.</summary>
+        void DrawGround()
+        {
+            var map = GetComponent<VoxelMap>();
+            Vector2 blockMin = map.OriginCm, blockMax = blockMin + new Vector2(map.SizeVoxels.x, map.SizeVoxels.y) * VoxelGrid.VoxelCm;
+            float xMin = Mathf.Max(blockMin.x, exploredCm.xMin - UnexploredMarginCm), yMin = Mathf.Max(blockMin.y, exploredCm.yMin - UnexploredMarginCm);
+            float xMax = Mathf.Min(blockMax.x, exploredCm.xMax + UnexploredMarginCm), yMax = Mathf.Min(blockMax.y, exploredCm.yMax + UnexploredMarginCm);
+            Set(groundMesh, new List<Vector3> { Floor(xMin, yMin), Floor(xMin, yMax), Floor(xMax, yMax), Floor(xMax, yMin) },
+                new List<int> { 0, 1, 2, 0, 2, 3 }, Unexplored);
         }
 
         /// <summary>Redraw the obstacles from the voxels painted as surface, which later photos may have cleared.</summary>
@@ -243,12 +272,7 @@ namespace SkyLead.Map
         {
             if (floorMesh != null)
                 return;
-            Mesh ground = Layer("Unexplored ground", UnexploredLiftM, MapLayers.Unexplored, out _);
-            // The voxel map's whole floor: anything inside it not yet proven free is unexplored, and drawn so.
-            var map = GetComponent<VoxelMap>();
-            Vector2 min = map.OriginCm, max = min + new Vector2(map.SizeVoxels.x, map.SizeVoxels.y) * VoxelGrid.VoxelCm;
-            Set(ground, new List<Vector3> { Floor(min.x, min.y), Floor(min.x, max.y), Floor(max.x, max.y), Floor(max.x, min.y) },
-                new List<int> { 0, 1, 2, 0, 2, 3 }, Unexplored);
+            groundMesh = Layer("Unexplored ground", UnexploredLiftM, MapLayers.Unexplored, out _);
             floorMesh = Layer("Proven floor", FloorLiftM, MapLayers.Floor, out _);
             floorMesh.indexFormat = IndexFormat.UInt32;
             currentMesh = Layer("Floor being revealed", FloorLiftM, MapLayers.Floor, out _);
@@ -262,6 +286,7 @@ namespace SkyLead.Map
                 edge.transform.localPosition = new Vector3(0f, ScanLiftM, 0f);
                 edge.sortingOrder = MapLayers.Scan;
             }
+            DrawGround();
         }
 
         Mesh Layer(string name, float lift, int order, out GameObject layer)
