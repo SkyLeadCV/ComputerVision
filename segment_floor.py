@@ -14,9 +14,11 @@ OUTPUT_DIR = Path("segmentation")
 # the mask only bounds where tile lines are searched, so including some wall costs
 # little, while missing floor can drop the tile needed for distance estimation.
 # Low-saturation tiles under some lighting still fall inside the range.
-# Hue is in OpenCV's 0-179 range.
+# Hue is in OpenCV's 0-179 range. Under the classroom's lamps the floor next to the drone reaches hue 60-70
+# (95th-99th percentile in the first real explorations); at 58 those pixels left holes at the bottom of the photo
+# and every ray stopped at its entry. The green walls stay below 55, so the wider range takes no more wall.
 FLOOR_HSV_LOWER = np.array([28, 6, 70])
-FLOOR_HSV_UPPER = np.array([58, 70, 230])
+FLOOR_HSV_UPPER = np.array([70, 70, 230])
 
 DENOISE_KERNEL = np.ones((5, 5), np.uint8)
 
