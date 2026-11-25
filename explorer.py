@@ -28,6 +28,7 @@ from find_free_space import (
 )
 from free_space_fast import FreeSpace, analyze_frame
 from image_io import write_image
+from victim_detection import Victim, VictimDetector
 
 CALIBRATION_FILE = Path("calibration/camera_calibration.npz")
 FLIGHTS_DIR = Path("flights")
@@ -74,6 +75,15 @@ CAMERA_TILT_DEG = 11.0
 # docs/classroom.md: free floor of the measured classroom and the take-off pad, in the room frame.
 CLASSROOM_FLOOR_CM = [(0, 0), (120, 0), (120, 310), (370, 310), (370, 0), (460, 0), (460, 560), (0, 560)]
 CLASSROOM_TAKEOFF_CM = (60, 60)
+# Where the simulator lays its victim (ClassroomLayout.Victim, room frame): the body's centre and the heading it
+# points along. 170 x 50 cm is a lying adult.
+CLASSROOM_VICTIMS = [((360.0, 470.0), 90.0)]
+VICTIM_BODY_CM = (170.0, 50.0)
+# YOLO found every class victim up to 3 m away; the synthetic drone sees them a little further, as the simulator would.
+SYNTHETIC_VICTIM_RANGE_CM = 400.0
+SYNTHETIC_VICTIM_CONFIDENCE = 0.9
+# docs/protocol.md: a detection closer than this to a known victim is the same one.
+SAME_VICTIM_CM = 300.0
 
 TOP_VIEW_PX_PER_CELL = 4
 UNKNOWN_BGR = (150, 150, 150)
@@ -85,6 +95,7 @@ TRAIL_BGR = (255, 120, 0)
 DRONE_BGR = (0, 0, 255)
 CHOICE_BGR = (0, 170, 0)
 ROOM_BGR = (0, 140, 255)
+VICTIM_BGR = (0, 0, 200)
 
 
 def wrap_deg(angle: float) -> float:
@@ -321,6 +332,41 @@ class MapLink:
             self.connection.close()
 
 
+def victim_body(centre: np.ndarray, heading_deg: float) -> np.ndarray:
+    """The four floor corners of a lying body centred at centre, its length along heading_deg."""
+    length, width = VICTIM_BODY_CM
+    along, across = direction(heading_deg) * length / 2, direction(heading_deg + 90.0) * width / 2
+    return np.array([centre - along - across, centre + along - across, centre + along + across, centre - along + across])
+
+
+def nearest_point(polygon: np.ndarray, point: np.ndarray) -> np.ndarray:
+    """The point of a polygon's outline nearest to point."""
+    starts, ends = polygon, np.roll(polygon, -1, axis=0)
+    edges = ends - starts
+    t = np.clip(np.einsum("ij,ij->i", point - starts, edges) / np.einsum("ij,ij->i", edges, edges), 0.0, 1.0)
+    candidates = starts + t[:, None] * edges
+    return candidates[np.argmin(np.linalg.norm(candidates - point, axis=1))]
+
+
+class Eyes:
+    """Free space and victims from one photo.
+
+    A photo without a reference tile still places its victims on the last floor measured: turning on the spot and
+    flying at the same height change neither the camera's tilt nor its height, so that floor holds.
+    """
+
+    def __init__(self, camera_matrix: np.ndarray, detector: VictimDetector) -> None:
+        self.camera_matrix, self.detector = camera_matrix, detector
+        self.floor: tuple[np.ndarray, float] | None = None
+
+    def look(self, photo: np.ndarray) -> tuple[FreeSpace | None, list[Victim]]:
+        free_space = analyze_frame(photo, self.camera_matrix)
+        if free_space is not None:
+            self.floor = (free_space.floor_normal, free_space.camera_height_cm)
+        victims = self.detector.find_victims(photo, *self.floor) if self.floor is not None else []
+        return free_space, victims
+
+
 class SyntheticDrone(DroneInterface):
     """A stand-in for the simulator inside the measured classroom: exact moves, and rays instead of photos."""
 
@@ -328,7 +374,9 @@ class SyntheticDrone(DroneInterface):
         super().__init__()
         floor = np.array(CLASSROOM_FLOOR_CM, float) - CLASSROOM_TAKEOFF_CM
         self.floor_contour = floor.astype(np.float32).reshape(-1, 1, 2)
-        self.segments = np.stack([floor, np.roll(floor, -1, axis=0)], axis=1)
+        self.bodies = [victim_body(np.array(centre) - CLASSROOM_TAKEOFF_CM, heading) for centre, heading in CLASSROOM_VICTIMS]
+        self.segments = np.concatenate([np.stack([outline, np.roll(outline, -1, axis=0)], axis=1)
+                                        for outline in [floor, *self.bodies]])
         self.fov = camera_fov(camera_matrix)
         self.position = np.zeros(2)
         self.yaw_deg = 0.0
@@ -347,7 +395,7 @@ class SyntheticDrone(DroneInterface):
             self.clock_s += amount / SYNTHETIC_FORWARD_SPEED_CM_S
             unit = direction(self.yaw_deg)
             for distance in np.arange(1.0, amount + 1e-9, 1.0):
-                if cv2.pointPolygonTest(self.floor_contour, tuple(map(float, self.position + distance * unit)), True) < DRONE_RADIUS_CM:
+                if self.clearance(self.position + distance * unit) < DRONE_RADIUS_CM:
                     # Like the simulator, stop at the contact point and report the planning bug.
                     self.position = self.position + (distance - 1.0) * unit
                     return "error collision"
@@ -355,30 +403,64 @@ class SyntheticDrone(DroneInterface):
             return "ok"
         return "error unknown command"
 
-    def see(self) -> FreeSpace:
-        self.clock_s += SYNTHETIC_PHOTO_TIME_S
-        angles = np.arange(-self.fov["left_deg"], self.fov["right_deg"], SWEEP_STEP_DEG)
-        angles = np.round(angles / SWEEP_STEP_DEG) * SWEEP_STEP_DEG
-        units = np.stack([np.sin(np.radians(self.yaw_deg + angles)), np.cos(np.radians(self.yaw_deg + angles))], axis=1)
+    def clearance(self, point: np.ndarray) -> float:
+        """Distance from a point to the nearest wall, furniture or body; negative inside one."""
+        point = tuple(map(float, point))
+        return min([cv2.pointPolygonTest(self.floor_contour, point, True)]
+                   + [-cv2.pointPolygonTest(body.astype(np.float32).reshape(-1, 1, 2), point, True) for body in self.bodies])
+
+    def hits(self, headings_deg: np.ndarray) -> np.ndarray:
+        """Distance along each heading to the first wall, furniture or body."""
+        units = np.stack([np.sin(np.radians(headings_deg)), np.cos(np.radians(headings_deg))], axis=1)
         starts, edges = self.segments[:, 0], self.segments[:, 1] - self.segments[:, 0]
-        # Ray-segment intersection for every ray against every wall at once: position + t·u = start + s·edge.
+        # Ray-segment intersection for every ray against every segment at once: position + t·u = start + s·edge.
         denominator = units[:, None, 0] * edges[None, :, 1] - units[:, None, 1] * edges[None, :, 0]
         offset = starts[None] - self.position
         with np.errstate(divide="ignore", invalid="ignore"):
             t = (offset[..., 0] * edges[None, :, 1] - offset[..., 1] * edges[None, :, 0]) / denominator
             s = (offset[..., 0] * units[:, None, 1] - offset[..., 1] * units[:, None, 0]) / denominator
-        hits = np.where((np.abs(denominator) > 1e-9) & (t > 0) & (s >= 0) & (s <= 1), t, np.inf).min(axis=1)
+        return np.where((np.abs(denominator) > 1e-9) & (t > 0) & (s >= 0) & (s <= 1), t, np.inf).min(axis=1)
 
-        # A flat floor seen from the flight height through the tilted camera.
+    def entry_cm(self, angles_deg: np.ndarray) -> np.ndarray:
+        """Start of the visible floor along each ray: a flat floor seen from the flight height through the tilted camera."""
         lowest_view = math.radians(self.fov["down_deg"] + CAMERA_TILT_DEG)
-        entry = SYNTHETIC_HEIGHT_CM / math.tan(lowest_view) / np.cos(np.radians(angles))
+        return SYNTHETIC_HEIGHT_CM / math.tan(lowest_view) / np.cos(np.radians(angles_deg))
+
+    def see(self) -> tuple[FreeSpace, list[Victim]]:
+        self.clock_s += SYNTHETIC_PHOTO_TIME_S
+        angles = np.arange(-self.fov["left_deg"], self.fov["right_deg"], SWEEP_STEP_DEG)
+        angles = np.round(angles / SWEEP_STEP_DEG) * SWEEP_STEP_DEG
+        hits = self.hits(self.yaw_deg + angles)
+        entry = self.entry_cm(angles)
+
         in_range = hits < MAX_RANGE_CM
         # stop_cm is the last free sample before the wall, as find_free_space.py reports it. A wall inside
         # the blind zone hides all floor, so the pipeline cannot measure it and reports stop_cm = entry_cm.
         stop = np.where(in_range, np.maximum(np.floor(hits / RAY_STEP_CM) * RAY_STEP_CM - RAY_STEP_CM, entry), MAX_RANGE_CM)
         kind = np.where(in_range, STOP_OBSTACLE, STOP_RANGE)
         allowed = allowed_distances(drone_safe_area(free_polygon_from_drone(angles, stop)), angles, entry)
-        return FreeSpace(angles, entry, stop, kind, allowed, "", SYNTHETIC_HEIGHT_CM)
+        # Straight down, seen from a camera tilted down: mostly along the image's y axis, partly along its view.
+        tilt = math.radians(CAMERA_TILT_DEG)
+        floor_normal = np.array([0.0, math.cos(tilt), math.sin(tilt)])
+        free_space = FreeSpace(angles, entry, stop, kind, allowed, "", SYNTHETIC_HEIGHT_CM, floor_normal)
+        return free_space, [victim for body in self.bodies if (victim := self.spot(body)) is not None]
+
+    def spot(self, body: np.ndarray) -> Victim | None:
+        """The victim as YOLO and victim_detection would report it: its body's nearest point, if in sight."""
+        nearest = nearest_point(body, self.position)
+        offset = nearest - self.position
+        distance = float(np.linalg.norm(offset))
+        heading = math.degrees(math.atan2(offset[0], offset[1]))
+        angle = wrap_deg(heading - self.yaw_deg)
+        if not -self.fov["left_deg"] <= angle <= self.fov["right_deg"]:
+            return None
+        if not self.entry_cm(np.array([angle]))[0] < distance <= SYNTHETIC_VICTIM_RANGE_CM:
+            return None
+        # Anything in between hides it; the body itself is hit right at the nearest point.
+        if self.hits(np.array([heading]))[0] < distance - 1.0:
+            return None
+        floor_cm = np.array([offset @ direction(self.yaw_deg + 90.0), offset @ direction(self.yaw_deg)])
+        return Victim(floor_cm, SYNTHETIC_VICTIM_CONFIDENCE, 0.0, np.zeros(4))
 
     def take_photo(self) -> np.ndarray:
         raise NotImplementedError("The synthetic drone sees by casting rays; use see()")
@@ -403,6 +485,8 @@ class Explorer:
         self.blind_zone_cm = STEP_LIMIT_CM
         self.stop_positions: list[np.ndarray] = []
         self.stops = 0
+        # Each known victim: its id and every map position it was seen at; the marker sits at their mean.
+        self.victims: list[tuple[int, list[np.ndarray]]] = []
         OUTPUT_DIR.mkdir(exist_ok=True)
 
     def pose(self) -> dict:
@@ -431,7 +515,11 @@ class Explorer:
 
     def look(self) -> FreeSpace | None:
         """Take a photo and add it to the grid and the map; a photo without a reference tile is retaken once."""
-        free_space = self.see() or self.see()
+        free_space, victims = self.see()
+        if free_space is None:
+            free_space, more = self.see()
+            victims = victims + more
+        self.report_victims(victims)
         if free_space is None:
             return None
         rays = trusted_rays(free_space)
@@ -447,6 +535,20 @@ class Explorer:
             "kind": [int(k) for k in rays["kind"]],
         })
         return free_space
+
+    def report_victims(self, victims: list[Victim]) -> None:
+        """Place each victim on the map, as a new one or as a known one if it lies within SAME_VICTIM_CM."""
+        for victim in victims:
+            right, forward = victim.floor_cm
+            point = self.position + right * direction(self.yaw_deg + 90.0) + forward * direction(self.yaw_deg)
+            known = next((entry for entry in self.victims if np.linalg.norm(np.mean(entry[1], axis=0) - point) < SAME_VICTIM_CM), None)
+            if known is None:
+                known = (len(self.victims) + 1, [])
+                self.victims.append(known)
+            known[1].append(point)
+            x, y = np.mean(known[1], axis=0)
+            self.map.send("victim", self.clock(), id=known[0], x=round(float(x), 1), y=round(float(y), 1),
+                          confidence=round(victim.confidence, 2))
 
     def sweep(self) -> float:
         """Photos to the left, ahead and to the right; returns the heading the stop is planned from."""
@@ -587,6 +689,10 @@ class Explorer:
 
         if self.room is not None:
             cv2.polylines(image, [np.array([px(p) for p in self.room], np.int32)], True, ROOM_BGR, 1)
+        for victim_id, points in self.victims:
+            centre = px(np.mean(points, axis=0))
+            cv2.circle(image, centre, 9, VICTIM_BGR, -1)
+            cv2.putText(image, str(victim_id), (centre[0] + 11, centre[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, VICTIM_BGR, 1)
         cv2.circle(image, px(self.position), 6, DRONE_BGR, -1)
         cv2.arrowedLine(image, px(self.position), px(self.position + 40 * direction(self.yaw_deg)), DRONE_BGR, 2)
         if choice is not None:
@@ -676,7 +782,8 @@ def main() -> None:
     else:
         drone = UnityDrone(args.sim) if args.sim else TelloDrone()
         start = time.monotonic()
-        see, clock = (lambda: analyze_frame(drone.take_photo(), camera_matrix)), (lambda: time.monotonic() - start)
+        eyes = Eyes(camera_matrix, VictimDetector(camera_matrix))
+        see, clock = (lambda: eyes.look(drone.take_photo())), (lambda: time.monotonic() - start)
 
     session = datetime.now().strftime("%Y%m%d_%H%M%S")
     map_link = MapLink(session, args.map)
@@ -686,7 +793,7 @@ def main() -> None:
     finally:
         drone.close()
         map_link.close()
-    print(f"{result}: {explorer.stops} stops, {map_link.seq} messages in {map_link.path}, grid images in {OUTPUT_DIR}/")
+    print(f"{result}: {explorer.stops} stops, {len(explorer.victims)} victims, {map_link.seq} messages in {map_link.path}, grid images in {OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":

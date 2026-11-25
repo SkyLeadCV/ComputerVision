@@ -20,5 +20,9 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+      # ultralytics would pull PyTorch's GPU build, about 3 GB; the runner has no GPU.
+      - run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements.txt -r requirements-dev.txt
+      # ultralytics pulls opencv-python, which overwrites the contrib build and its CascadeClassifier.
+      - run: pip install --force-reinstall --no-deps opencv-contrib-python==5.0.0.93
       - run: pytest -rs
