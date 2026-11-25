@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -25,6 +26,10 @@ namespace SkyLead.Map
         static readonly Vector3 ThreeDOffset = new(0f, 2.6f, -2.1f);
         const float TransitionS = 0.8f;
 
+        // How quickly the framing follows the explored area as it grows: about a second to settle, so the view moves
+        // with the drone without jumping at each photo.
+        const float FollowRate = 3f;
+
         (Vector3 position, Quaternion rotation) top, threeD;
         bool showingTop = true;
         float blend;
@@ -33,22 +38,36 @@ namespace SkyLead.Map
 
         void Start()
         {
-            Frame(map, out top, out threeD);
+            Frame(AreaToShow(plan, map.GetComponent<FlightTrail>()), out top, out threeD);
             blend = 0f;
             Apply(0f);
             ShowLayers(true);
         }
 
-        /// <summary>The two camera poses that fit the block: straight down from above, and above and behind its start.</summary>
-        public static void Frame(VoxelMap map, out (Vector3 position, Quaternion rotation) top,
+        /// <summary>
+        /// The part of the map worth showing, in protocol cm: the floor proven free and the take-off spot (from the plan),
+        /// the trail and the drone. The voxel block is far larger, so that any flight fits in it.
+        /// </summary>
+        public static Rect AreaToShow(FloorPlan plan, FlightTrail trail)
+        {
+            Rect area = plan.ExploredCm;
+            var points = new List<Vector3>(trail.Points) { trail.Drone.localPosition };
+            foreach (Vector3 point in points)
+                area = Rect.MinMaxRect(Mathf.Min(area.xMin, point.x * 100f), Mathf.Min(area.yMin, point.z * 100f),
+                    Mathf.Max(area.xMax, point.x * 100f), Mathf.Max(area.yMax, point.z * 100f));
+            return area;
+        }
+
+        /// <summary>The two camera poses that fit an area of the floor: straight down from above, and above and behind it.</summary>
+        public static void Frame(Rect areaCm, out (Vector3 position, Quaternion rotation) top,
             out (Vector3 position, Quaternion rotation) threeD)
         {
-            Vector3 size = new Vector3(map.SizeVoxels.x, map.SizeVoxels.z, map.SizeVoxels.y) * VoxelGrid.VoxelCm / 100f;
-            Vector3 centre = VoxelGrid.ToUnity(map.OriginCm.x, map.OriginCm.y, 0f) + new Vector3(size.x, 0f, size.z) / 2f;
-            float halfExtent = Mathf.Max(size.x, size.z) / 2f + TopMarginM;
+            Vector3 centre = VoxelGrid.ToUnity(areaCm.center.x, areaCm.center.y, 0f);
+            float extent = Mathf.Max(areaCm.width, areaCm.height) / 100f;
+            float halfExtent = extent / 2f + TopMarginM;
             float height = halfExtent / Mathf.Tan(TopFovDeg * Mathf.Deg2Rad / 2f);
             top = (centre + Vector3.up * height, Quaternion.Euler(90f, 0f, 0f));
-            Vector3 position = centre + ThreeDOffset * Mathf.Max(size.x, size.z) / 2f;
+            Vector3 position = centre + ThreeDOffset * extent / 2f;
             threeD = (position, Quaternion.LookRotation(centre - position));
         }
 
@@ -57,10 +76,15 @@ namespace SkyLead.Map
             Keyboard keyboard = Keyboard.current;
             if (keyboard != null && keyboard[toggleKey].wasPressedThisFrame)
                 showingTop = !showingTop;
+
+            Frame(AreaToShow(plan, map.GetComponent<FlightTrail>()), out var topGoal, out var threeDGoal);
+            // Exponential smoothing: the same share of the remaining way every second, whatever the frame rate.
+            float follow = 1f - Mathf.Exp(-FollowRate * Time.deltaTime);
+            top = (Vector3.Lerp(top.position, topGoal.position, follow), Quaternion.Slerp(top.rotation, topGoal.rotation, follow));
+            threeD = (Vector3.Lerp(threeD.position, threeDGoal.position, follow),
+                Quaternion.Slerp(threeD.rotation, threeDGoal.rotation, follow));
+
             float target = showingTop ? 0f : 1f;
-            // MoveTowards lands exactly on the target; Mathf.Approximately(0, 0) is false where denormals are flushed.
-            if (blend == target)
-                return;
             float before = blend;
             blend = Mathf.MoveTowards(blend, target, Time.deltaTime / TransitionS);
             // Layers swap halfway, when the camera is between the two views.

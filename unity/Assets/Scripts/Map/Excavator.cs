@@ -8,8 +8,10 @@ namespace SkyLead.Map
         // Half a voxel, so a ray that crosses a voxel near its corner still empties it.
         const float RayStepCm = VoxelGrid.VoxelCm / 2f;
 
-        public static void Apply(VoxelGrid grid, Observation observation, CameraFov camera)
+        /// <summary>Apply one observation; returns how many of its rays that saw floor ended outside the grid.</summary>
+        public static int Apply(VoxelGrid grid, Observation observation, CameraFov camera)
         {
+            int outside = 0;
             Pose pose = observation.pose;
             Rays rays = observation.rays;
             // pitch_deg is positive nose up, so it lowers the bottom edge of the view and raises the top one.
@@ -20,8 +22,12 @@ namespace SkyLead.Map
             // erase the surface that a neighbouring ray of the same photo has just found.
             for (int i = 0; i < rays.angle_deg.Length; i++)
             {
-                if (SawFloor(rays, i))
-                    EmptyAir(grid, pose, Direction(pose, rays.angle_deg[i]), rays.stop_cm[i], tanDown, tanUp);
+                if (!SawFloor(rays, i))
+                    continue;
+                Vector2 direction = Direction(pose, rays.angle_deg[i]);
+                EmptyAir(grid, pose, direction, rays.stop_cm[i], tanDown, tanUp);
+                if (!grid.TryCell(pose.x + rays.stop_cm[i] * direction.x, pose.y + rays.stop_cm[i] * direction.y, 0f, out _))
+                    outside++;
             }
 
             for (int i = 0; i < rays.angle_deg.Length; i++)
@@ -36,6 +42,7 @@ namespace SkyLead.Map
                 int top = Mathf.FloorToInt((pose.z + distance * tanUp) / VoxelGrid.VoxelCm);
                 SetColumn(grid, pose.x + distance * direction.x, pose.y + distance * direction.y, 0, top, Voxel.Surface);
             }
+            return outside;
         }
 
         /// <summary>
