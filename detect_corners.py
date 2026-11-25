@@ -111,7 +111,13 @@ def rectify(points: np.ndarray, inverse_camera_matrix: np.ndarray, basis: np.nda
 
 def edge_coverage(start: np.ndarray, end: np.ndarray, edges: np.ndarray) -> float:
     samples = np.linspace(start, end, SIDE_SAMPLE_COUNT).round().astype(int)
-    return float(np.mean(edges[samples[:, 1], samples[:, 0]] > 0))
+    # A corner can round to one pixel past the image (960 or 720 in the first real exploration, which crashed it);
+    # a side out of the image shows no edge there.
+    height, width = edges.shape
+    inside = (samples[:, 0] >= 0) & (samples[:, 0] < width) & (samples[:, 1] >= 0) & (samples[:, 1] < height)
+    covered = np.zeros(len(samples), bool)
+    covered[inside] = edges[samples[inside, 1], samples[inside, 0]] > 0
+    return float(np.mean(covered))
 
 
 def tile_corners(joints_a: np.ndarray, joints_b: np.ndarray, i: int, j: int) -> np.ndarray:
