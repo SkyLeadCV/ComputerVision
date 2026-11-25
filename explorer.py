@@ -75,10 +75,11 @@ CAMERA_TILT_DEG = 11.0
 # docs/classroom.md: free floor of the measured classroom and the take-off pad, in the room frame.
 CLASSROOM_FLOOR_CM = [(0, 0), (120, 0), (120, 310), (370, 310), (370, 0), (460, 0), (460, 560), (0, 560)]
 CLASSROOM_TAKEOFF_CM = (60, 60)
-# Where the simulator lays its victim (ClassroomLayout.Victim, room frame): the body's centre and the heading it
-# points along. 170 x 50 cm is a lying adult.
-CLASSROOM_VICTIMS = [((360.0, 530.0), 90.0)]
-VICTIM_BODY_CM = (170.0, 50.0)
+# Where the simulator places its victim (ClassroomLayout.Victim, room frame): the footprint's centre and the heading
+# its length points along. It sits at the dead end of the right arm, back against the bottom wall and legs out up the
+# arm, which covers about 100 x 45 cm of floor.
+CLASSROOM_VICTIMS = [((415.0, 55.0), 0.0)]
+VICTIM_BODY_CM = (100.0, 45.0)
 # YOLO found every class victim up to 3 m away; the synthetic drone sees them a little further, as the simulator would.
 SYNTHETIC_VICTIM_RANGE_CM = 400.0
 SYNTHETIC_VICTIM_CONFIDENCE = 0.9
@@ -333,7 +334,7 @@ class MapLink:
 
 
 def victim_body(centre: np.ndarray, heading_deg: float) -> np.ndarray:
-    """The four floor corners of a lying body centred at centre, its length along heading_deg."""
+    """The four floor corners of a victim's footprint centred at centre, its length along heading_deg."""
     length, width = VICTIM_BODY_CM
     along, across = direction(heading_deg) * length / 2, direction(heading_deg + 90.0) * width / 2
     return np.array([centre - along - across, centre + along - across, centre + along + across, centre - along + across])
