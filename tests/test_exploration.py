@@ -87,3 +87,13 @@ def test_yaw_counts_from_take_off_whatever_the_drone_reports(camera_matrix, outp
     observations = [message for message in recorded_messages(map_link) if message["type"] == "observation"]
     assert observations[0]["pose"]["yaw_deg"] == 0.0
     assert np.linalg.norm(drone.position) < explorer.MIN_FORWARD_CM
+
+
+def test_a_crash_is_kept_in_the_decision_log(camera_matrix, output_dirs, monkeypatch):
+    drone, map_link, exploration = synthetic_mission(camera_matrix, monkeypatch)
+    monkeypatch.setattr(exploration, "see", lambda: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        exploration.run("crash")
+    lines = (output_dirs / "flights" / "crash" / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
+    crash = json.loads(lines[-2])
+    assert crash["event"] == "crash" and "ZeroDivisionError" in crash["traceback"]

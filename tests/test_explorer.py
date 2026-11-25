@@ -119,8 +119,8 @@ def test_the_recorder_keeps_photos_commands_and_the_error_that_stopped_the_fligh
         recorder.send("forward 500")
     recorder.close()
 
-    assert (tmp_path / "flight" / "photo_001.jpg").exists()
+    assert (tmp_path / "flight" / "photo_001.png").exists()
     lines = (tmp_path / "flight" / "commands.log").read_text(encoding="utf-8").splitlines()
     assert "takeoff" in lines[0] and "'battery_pct': 87.0" in lines[0]
-    assert "photo_001.jpg" in lines[1]
+    assert "photo_001.png" in lines[1]
     assert "TimeoutError: no reply" in lines[2]
