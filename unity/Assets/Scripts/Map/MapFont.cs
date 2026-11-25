@@ -2,11 +2,11 @@ using UnityEngine;
 
 namespace SkyLead.Map
 {
-    /// <summary>The map's one typeface: a monospaced system font, so numbers keep their columns as they change.</summary>
+    /// <summary>The map's one typeface: a plain sans-serif from the system, so the HUD reads cleanly on any PC.</summary>
     public static class MapFont
     {
-        // Consolas ships with Windows, which the GPU PC runs; the others are fallbacks found on most systems.
-        static readonly string[] Names = { "Consolas", "Cascadia Mono", "Courier New" };
+        // Segoe UI ships with Windows; the simulator also runs on a Linux PC, which has DejaVu or Liberation Sans.
+        static readonly string[] Names = { "Segoe UI", "Helvetica Neue", "Arial", "DejaVu Sans", "Liberation Sans" };
         const int BaseSizePx = 32;
 
         static Font font;
