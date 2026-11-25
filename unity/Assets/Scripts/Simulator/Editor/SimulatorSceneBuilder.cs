@@ -34,6 +34,8 @@ namespace SkyLead.Simulator.Editor
         static readonly Color RescuerShirtColor = new(0.70f, 0.12f, 0.12f);
         // A dark neutral grey: no hue and too dark for the floor threshold.
         static readonly Color TrousersColor = new(0.22f, 0.22f, 0.22f);
+        static readonly Color ShoesColor = new(0.10f, 0.10f, 0.10f);
+        static readonly Color HairColor = new(0.20f, 0.13f, 0.08f);
         static readonly Color SkinColor = new(0.85f, 0.65f, 0.52f);
         static readonly Color AmbientColor = new(0.6f, 0.6f, 0.6f);
         const float SunIntensity = 0.5f;
@@ -62,6 +64,8 @@ namespace SkyLead.Simulator.Editor
                 VictimShirt = LitMaterial("VictimShirt", VictimShirtColor),
                 RescuerShirt = LitMaterial("RescuerShirt", RescuerShirtColor),
                 Trousers = LitMaterial("Trousers", TrousersColor),
+                Shoes = LitMaterial("Shoes", ShoesColor),
+                Hair = LitMaterial("Hair", HairColor),
                 Skin = LitMaterial("Skin", SkinColor),
             });
 
