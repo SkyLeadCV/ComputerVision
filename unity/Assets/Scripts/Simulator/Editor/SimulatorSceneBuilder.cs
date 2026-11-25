@@ -143,6 +143,9 @@ namespace SkyLead.Simulator.Editor
             material.SetColor("_BaseColor", Color.white);
             material.SetTexture("_BaseMap", FloorTexture());
             material.SetTextureScale("_BaseMap", new Vector2(ClassroomLayout.WidthCm, ClassroomLayout.DepthCm) / ClassroomLayout.TileCm);
+            // The texture's joints sit on whole texture repeats, at x = 60 k - 60 offset, so this puts them at the
+            // layout's joint offset.
+            material.SetTextureOffset("_BaseMap", new Vector2(-ClassroomLayout.TileJointOffsetXCm / ClassroomLayout.TileCm, 0f));
             EditorUtility.SetDirty(material);
             AssetDatabase.SaveAssets();
             return material;

@@ -25,6 +25,12 @@ namespace SkyLead.Simulator
         public const float DepthCm = 560f;
         public const float CeilingCm = 300f;
         public const float TileCm = 60f;
+        // Where the tile joints running along y cross the x axis, modulo a tile. The real classroom has whole tiles in
+        // both arms, and the vision pipeline needs one to measure anything. The 90 cm right arm (x 370-460) only holds a
+        // whole tile when a joint falls between x 370 and 400, so any offset from 10 to 40 cm does; 25 cm is the middle
+        // of that range, since the real offset was not measured. The joints along x stay on the bottom wall, as the
+        // take-off pad sits one tile from it (docs/classroom.md).
+        public const float TileJointOffsetXCm = 25f;
 
         // The whole closed part of the plan, from the floor to the ceiling: anything that blocks the way is solid,
         // so the height of the real tables does not matter.
