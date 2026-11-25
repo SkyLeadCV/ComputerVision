@@ -19,6 +19,7 @@ import json
 import math
 import socket
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -419,7 +420,9 @@ class FlightRecorder:
     def take_photo(self) -> np.ndarray:
         photo = self.drone.take_photo()
         self.photos += 1
-        name = f"photo_{self.photos:03d}.jpg"
+        # PNG keeps the frame exactly as the explorer analysed it: a JPEG's small losses move the tile edges enough
+        # to change a replayed decision (replay_flight.py).
+        name = f"photo_{self.photos:03d}.png"
         write_image(self.folder / name, photo)
         self.write(name)
         return photo
@@ -963,6 +966,9 @@ class Explorer:
             return f"{reason}, {outcome}"
         except KeyboardInterrupt:
             reason = "user_stop"
+            raise
+        except Exception as error:
+            self.log.note("crash", f"{type(error).__name__}: {error}", error=repr(error), traceback=traceback.format_exc())
             raise
         finally:
             self.log.note("end", f"session ends: {reason}", reason=reason, position=self.position, stops=self.stops)

@@ -1,7 +1,7 @@
 """Fly a recorded flight again, offline, to see every decision the drone took and why.
 
 explorer.py --tello keeps each photo and each command with its reply and state in flights/<session>/. The explorer
-decides only from those, so feeding them back in the same order repeats the flight decision by decision, now with
+decides only from those (photos kept as JPEG before PNG may differ slightly and part ways sooner), so feeding them back in the same order repeats the flight decision by decision, now with
 the decision log (flights/<session>_replay/decisions.jsonl) and the grid images (explorer/<session>_replay/). If
 the code asks for a command the drone did not get, it says where the two part ways and stops there.
 
@@ -20,7 +20,7 @@ from explorer import CALIBRATION_FILE, Explorer, Eyes, Guide, MapLink, camera_fo
 from image_io import read_image
 from victim_detection import VictimDetector
 
-# "  12.3 s  cw 54        -> ok                       {'yaw_deg': ...}", "  13.1 s  photo_004.jpg" or
+# "  12.3 s  cw 54        -> ok                       {'yaw_deg': ...}", "  13.1 s  photo_004.png" or
 # "  14.0 s  forward 200  -> TimeoutError: ...", as FlightRecorder writes them.
 LOG_LINE = re.compile(r"^\s*(?P<t>[\d.]+) s  (?P<rest>.*)$")
 COMMAND_LINE = re.compile(r"^(?P<command>.+?)\s+-> (?P<reply>.*?)\s*(?P<state>\{.*\})?$")
