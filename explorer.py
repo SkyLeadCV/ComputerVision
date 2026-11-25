@@ -68,9 +68,9 @@ SYNTHETIC_YAW_SPEED_DEG_S = 90.0
 SYNTHETIC_PHOTO_TIME_S = 1.0
 # The simulator's take-off height (docs/simulator.md).
 SYNTHETIC_HEIGHT_CM = 80.0
-# The Tello's camera looks down this much in flight (measured on the tiles in the first flight's photo), which
-# brings the blind zone to about 1.25 m instead of the 2 m of a level camera.
-SYNTHETIC_CAMERA_TILT_DEG = 11.0
+# The Tello's camera looks down this much from its body (docs/simulator.md, measured on the tiles in the first
+# flight's photo), which brings the blind zone to about 1.25 m instead of the 2 m of a level camera.
+CAMERA_TILT_DEG = 11.0
 # docs/classroom.md: free floor of the measured classroom and the take-off pad, in the room frame.
 CLASSROOM_FLOOR_CM = [(0, 0), (120, 0), (120, 310), (370, 310), (370, 0), (460, 0), (460, 560), (0, 560)]
 CLASSROOM_TAKEOFF_CM = (60, 60)
@@ -370,7 +370,7 @@ class SyntheticDrone(DroneInterface):
         hits = np.where((np.abs(denominator) > 1e-9) & (t > 0) & (s >= 0) & (s <= 1), t, np.inf).min(axis=1)
 
         # A flat floor seen from the flight height through the tilted camera.
-        lowest_view = math.radians(self.fov["down_deg"] + SYNTHETIC_CAMERA_TILT_DEG)
+        lowest_view = math.radians(self.fov["down_deg"] + CAMERA_TILT_DEG)
         entry = SYNTHETIC_HEIGHT_CM / math.tan(lowest_view) / np.cos(np.radians(angles))
         in_range = hits < MAX_RANGE_CM
         # stop_cm is the last free sample before the wall, as find_free_space.py reports it. A wall inside
@@ -437,7 +437,9 @@ class Explorer:
         rays = trusted_rays(free_space)
         self.grid.add_observation(self.position, self.yaw_deg, rays)
         self.blind_zone_cm = float(np.median(free_space.entry_cm))
-        pose = {**self.pose(), "z": round(self.state["height_cm"], 1), "pitch_deg": round(self.state["pitch_deg"], 1)}
+        # docs/protocol.md wants the camera's pitch, which looks CAMERA_TILT_DEG below the body's.
+        pitch = self.state["pitch_deg"] - CAMERA_TILT_DEG
+        pose = {**self.pose(), "z": round(self.state["height_cm"], 1), "pitch_deg": round(pitch, 1)}
         self.map.send("observation", self.clock(), pose=pose, rays={
             "angle_deg": [float(a) for a in rays["angle_deg"]],
             "entry_cm": [round(float(e)) for e in rays["entry_cm"]],

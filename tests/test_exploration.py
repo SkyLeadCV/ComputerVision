@@ -42,6 +42,8 @@ def test_synthetic_exploration_comes_back_home(takeoff_cm, camera_matrix, output
     assert messages[-1]["reason"] == "back_at_start"
     for message in messages:
         if message["type"] == "observation":
+            # The synthetic drone hovers level, so the camera's pitch is its tilt.
+            assert message["pose"]["pitch_deg"] == -explorer.CAMERA_TILT_DEG
             rays = message["rays"]
             assert all(stop - entry <= explorer.STEP_LIMIT_CM for entry, stop in zip(rays["entry_cm"], rays["stop_cm"]))
 
