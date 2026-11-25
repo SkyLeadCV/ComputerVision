@@ -73,33 +73,38 @@ namespace SkyLead.Simulator.Tests
             Assert.AreEqual(500f, FlightDistanceCm(pad, 0f), 0.5f, "forward to the top wall");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 90f), 0.5f, "right to the tables block");
             Assert.AreEqual(60f, FlightDistanceCm(pad, 270f), 0.5f, "left to the wall");
-            // The rescuer waits right behind the pad, before the wall.
-            Assert.Less(FlightDistanceCm(pad, 180f), 59f, "back into the rescuer");
-            // The right arm's lane: from its middle, up the arm and past the tables into the top band.
-            Assert.AreEqual(559.5f, FlightDistanceCm(new Vector2(415f, 0.5f), 0f), 0.5f, "up the right arm");
+            Assert.AreEqual(60f, FlightDistanceCm(pad, 180f), 0.5f, "back to the bottom wall");
+            // The right arm's lane: from its middle, over the seated victim's legs, up the arm and past the tables into the top band.
+            Assert.AreEqual(500f, FlightDistanceCm(new Vector2(415f, 60f), 0f), 0.5f, "up the right arm");
         }
 
         [Test]
-        public void TheDroneFliesOverTheLyingVictim()
+        public void TheVictimSitsAgainstTheEndOfTheRightArm()
         {
             room = ClassroomBuilder.Build(default);
             Physics.SyncTransforms();
-            Vector2 victim = ClassroomLayout.Victim.PositionCm;
+            var bounds = new Bounds();
+            bool first = true;
+            foreach (Renderer part in room.transform.Find("Victim").GetComponentsInChildren<Renderer>())
+            {
+                if (first)
+                    bounds = part.bounds;
+                else
+                    bounds.Encapsulate(part.bounds);
+                first = false;
+            }
+            Vector3 minCm = bounds.min * 100f, maxCm = bounds.max * 100f;
 
-            Vector2 below = victim - new Vector2(0f, 100f);
-            Assert.AreEqual(ClassroomLayout.DepthCm - below.y, FlightDistanceCm(below, 0f), 0.5f, "over the victim");
-            Assert.IsTrue(Physics.Raycast(ClassroomLayout.ToUnity(victim.x, victim.y, FlightHeightCm), Vector3.down, out RaycastHit hit));
-            Assert.AreEqual("Victim", PersonOf(hit.collider.transform).name);
-            Assert.Less(hit.point.y * 100f, 30f, "lying low");
-        }
-
-        [Test]
-        public void TheRescuerWaitsBehindTheTakeOffPad()
-        {
-            room = ClassroomBuilder.Build(default);
-            float padY = ClassroomLayout.TakeOffPadCm.y;
-            foreach (Renderer part in room.transform.Find("Rescuer").GetComponentsInChildren<Renderer>())
-                Assert.Less(part.bounds.max.z * 100f, padY, $"{part.name} behind the drone, out of the camera's view");
+            // Its back against the bottom wall (Unity z is the room's y), inside the 370-460 cm arm.
+            Assert.AreEqual(0f, minCm.z, 5f, "back against the wall");
+            Assert.Greater(minCm.x, 370f);
+            Assert.Less(maxCm.x, 460f);
+            // Low enough for victim_detection.py to take it for a victim (its LYING_MAX_TOP_CM is 100), and sitting up.
+            Assert.Less(maxCm.y, 100f, "head below a seated person on a chair");
+            Assert.Greater(maxCm.y, 70f, "sitting up");
+            // The legs reach out along the floor, and a drone coming down the arm meets the person before the wall.
+            Assert.Greater(maxCm.z, 80f, "legs out in front");
+            Assert.Less(FlightDistanceCm(new Vector2(415f, 300f), 180f), 300f - 20f, "into the victim before the wall");
         }
 
         [Test]
