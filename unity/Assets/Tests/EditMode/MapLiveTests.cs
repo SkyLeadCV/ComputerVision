@@ -141,16 +141,93 @@ namespace SkyLead.Map.Tests
         [Test]
         public void TheLatestScanReachesEachRaysStopAndARayWithoutFloorReachesNothing()
         {
-            var trail = mapObject.GetComponent<FlightTrail>();
+            var plan = mapObject.GetComponent<FloorPlan>();
             receiver.Receive(SessionStartLine("s"));
             // Facing +x (yaw 90): the first ray straight ahead saw floor up to 250 cm, the second saw none.
             receiver.Receive("{\"type\": \"observation\", \"seq\": 1, \"t\": 1.0, "
                 + "\"pose\": {\"x\": 5.0, \"y\": 5.0, \"z\": 80.0, \"yaw_deg\": 90.0, \"pitch_deg\": 0.0}, "
                 + "\"rays\": {\"angle_deg\": [0.0, 10.0], \"entry_cm\": [150.0, 150.0], \"stop_cm\": [250.0, 150.0], \"kind\": [0, 0]}}");
 
-            Assert.AreEqual(2, trail.ScanRim.Count);
-            Assert.Less(Vector3.Distance(VoxelGrid.ToUnity(255f, 5f, 0f), trail.ScanRim[0]), 1e-4f);
-            Assert.Less(Vector3.Distance(VoxelGrid.ToUnity(5f, 5f, 0f), trail.ScanRim[1]), 1e-4f);
+            Assert.AreEqual(2, plan.ScanRim.Count);
+            Assert.Less(Vector3.Distance(VoxelGrid.ToUnity(255f, 5f, 0f), plan.ScanRim[0]), 1e-4f);
+            Assert.Less(Vector3.Distance(VoxelGrid.ToUnity(5f, 5f, 0f), plan.ScanRim[1]), 1e-4f);
+        }
+
+        [Test]
+        public void ARevealInStepsEndsExactlyAsOneFullObservationAndPaintsNoFaceBeforeTheEnd()
+        {
+            var revealed = new GameObject("Revealed").AddComponent<VoxelMap>();
+            var whole = new GameObject("Whole").AddComponent<VoxelMap>();
+            try
+            {
+                var session = JsonUtility.FromJson<SessionStart>(SessionStartLine("s"));
+                revealed.StartSession(session);
+                whole.StartSession(session);
+                var observation = JsonUtility.FromJson<Observation>("{\"type\": \"observation\", \"seq\": 1, \"t\": 1.0, "
+                    + "\"pose\": {\"x\": 5.0, \"y\": 5.0, \"z\": 80.0, \"yaw_deg\": 0.0, \"pitch_deg\": -11.0}, "
+                    + "\"rays\": {\"angle_deg\": [-10.0, 0.0, 10.0], \"entry_cm\": [120.0, 120.0, 120.0], "
+                    + "\"stop_cm\": [250.0, 300.0, 120.0], \"kind\": [0, 2, 0]}}");
+
+                foreach (float progress in new[] { 0.2f, 0.5f, 0.9f })
+                {
+                    revealed.Observe(observation, progress);
+                    Assert.IsFalse(HasVoxel(revealed.Grid, Voxel.Surface), $"a face painted at {progress}");
+                }
+                revealed.Observe(observation, 1f);
+                whole.Observe(observation);
+
+                for (int x = 0; x < whole.Grid.Size.x; x++)
+                for (int y = 0; y < whole.Grid.Size.y; y++)
+                for (int z = 0; z < whole.Grid.Size.z; z++)
+                    Assert.AreEqual(whole.Grid[x, y, z], revealed.Grid[x, y, z], $"voxel ({x}, {y}, {z})");
+                Assert.IsTrue(HasVoxel(whole.Grid, Voxel.Surface));
+            }
+            finally
+            {
+                Object.DestroyImmediate(revealed.gameObject);
+                Object.DestroyImmediate(whole.gameObject);
+            }
+        }
+
+        static bool HasVoxel(VoxelGrid grid, Voxel value)
+        {
+            for (int x = 0; x < grid.Size.x; x++)
+            for (int y = 0; y < grid.Size.y; y++)
+            for (int z = 0; z < grid.Size.z; z++)
+            {
+                if (grid[x, y, z] == value)
+                    return true;
+            }
+            return false;
+        }
+
+        [Test]
+        public void ThePlanDrawsOneWallDotPerColumnSeenAsAnObstacle()
+        {
+            receiver.Receive(SessionStartLine("s"));
+            // Three rays ending on an obstacle 250 cm ahead, a little apart: a short stretch of wall.
+            receiver.Receive("{\"type\": \"observation\", \"seq\": 1, \"t\": 1.0, "
+                + "\"pose\": {\"x\": 5.0, \"y\": 5.0, \"z\": 80.0, \"yaw_deg\": 0.0, \"pitch_deg\": 0.0}, "
+                + "\"rays\": {\"angle_deg\": [-4.0, 0.0, 4.0], \"entry_cm\": [120.0, 120.0, 120.0], "
+                + "\"stop_cm\": [250.0, 250.0, 250.0], \"kind\": [0, 0, 0]}}");
+
+            VoxelGrid grid = mapObject.GetComponent<VoxelMap>().Grid;
+            int columns = 0;
+            for (int x = 0; x < grid.Size.x; x++)
+            for (int y = 0; y < grid.Size.y; y++)
+            {
+                for (int z = 0; z < grid.Size.z; z++)
+                {
+                    if (grid[x, y, z] != Voxel.Surface)
+                        continue;
+                    columns++;
+                    break;
+                }
+            }
+            Mesh walls = mapObject.transform.Find("Obstacles seen").GetComponent<MeshFilter>().sharedMesh;
+            Assert.Greater(columns, 0);
+            // A dot is a centre and eight rim points.
+            Assert.AreEqual(columns * 9, walls.vertexCount);
         }
 
         [Test]

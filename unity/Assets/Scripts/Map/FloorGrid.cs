@@ -5,21 +5,23 @@ namespace SkyLead.Map
 {
     /// <summary>
     /// The classroom's 60 cm tile grid, faint on the floor, so the map shows its scale. It reaches past the block and
-    /// fades out, like a planning table; inside unseen solid it stays hidden.
+    /// fades out at its edges.
     /// </summary>
     [ExecuteAlways, RequireComponent(typeof(VoxelMap))]
     public sealed class FloorGrid : MonoBehaviour
     {
-        [SerializeField] Material holoMaterial;
+        [SerializeField] Material overlayMaterial;
 
         // The classroom's tiles (docs/classroom.md). The take-off pad sits on a tile corner, so lines fall on multiples.
         const float TileCm = 60f;
         // Two tiles past the block on each side, where the lines fade to nothing.
         const float MarginCm = 2f * TileCm;
         const float LineWidthM = 0.008f;
-        const float FloorLiftM = 0.004f;
+        // Between the floor plan and the obstacles drawn on it.
+        const float FloorLiftM = 0.0035f;
 
-        static readonly Color Cyan = new(0.25f, 0.9f, 0.85f, 0.22f);
+        // Barely darker than the white floor: a scale to read, not a pattern to look at.
+        static readonly Color Line = new(0.55f, 0.58f, 0.62f, 0.22f);
 
         GameObject gridObject;
 
@@ -44,7 +46,9 @@ namespace SkyLead.Map
             mesh.SetColors(colors);
             mesh.SetTriangles(triangles, 0);
             mesh.RecalculateNormals();
-            gridObject = MapShapes.MeshObject(transform, "Floor grid", mesh, holoMaterial).gameObject;
+            MeshRenderer renderer = MapShapes.MeshObject(transform, "Floor grid", mesh, overlayMaterial);
+            renderer.sortingOrder = MapLayers.Grid;
+            gridObject = renderer.gameObject;
             gridObject.transform.localPosition = new Vector3(0f, FloorLiftM, 0f);
         }
 
@@ -70,7 +74,7 @@ namespace SkyLead.Map
             for (int i = 0; i < stops.Length; i++)
             {
                 Vector2 centre = a + along * stops[i];
-                var color = new Color(Cyan.r, Cyan.g, Cyan.b, Cyan.a * alphas[i]);
+                var color = HudStyle.OnMap(new Color(Line.r, Line.g, Line.b, Line.a * alphas[i]));
                 vertices.Add(VoxelGrid.ToUnity(centre.x - side.x, centre.y - side.y, 0f));
                 vertices.Add(VoxelGrid.ToUnity(centre.x + side.x, centre.y + side.y, 0f));
                 colors.Add(color);

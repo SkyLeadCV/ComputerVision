@@ -51,7 +51,8 @@ namespace SkyLead.Map
             var vertices = new Vector3[CircleSegments + 1];
             var colors = new Color[CircleSegments + 1];
             var triangles = new int[CircleSegments * 3];
-            colors[0] = centre;
+            colors[0] = HudStyle.OnMap(centre);
+            rim = HudStyle.OnMap(rim);
             for (int i = 0; i < CircleSegments; i++)
             {
                 float angle = 2f * Mathf.PI * i / CircleSegments;

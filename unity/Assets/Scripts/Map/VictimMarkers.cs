@@ -1,34 +1,29 @@
 using System.Collections.Generic;
 using UnityEngine;
+using static SkyLead.Map.HudStyle;
 
 namespace SkyLead.Map
 {
-    /// <summary>A red beacon for every victim: a glow on the floor, a pulsing ring, a light beam and its tag.
-    /// A repeated id moves its beacon (docs/protocol.md).</summary>
+    /// <summary>A red marker for every victim: a disc on the floor with a slowly pulsing ring, a thin beam for the 3D
+    /// view and its tag. A repeated id moves its marker (docs/protocol.md).</summary>
     public sealed class VictimMarkers : MonoBehaviour
     {
-        [Tooltip("Bright vertex-coloured material: ring and beam.")]
-        [SerializeField] Material glowMaterial;
-
-        [Tooltip("Faint vertex-coloured material: the glow on the floor.")]
-        [SerializeField] Material holoMaterial;
+        [Tooltip("Unlit, vertex-coloured material for the markers.")]
+        [SerializeField] Material overlayMaterial;
 
         // Taller than the tables (about 75 cm), so the beam shows from the 3D view over the furniture.
-        const float BeamHeightM = 1.4f;
-        const float BeamWidthM = 0.03f;
-        const float RingWidthM = 0.02f;
-        // About a person's shoulder width, so the glow covers someone lying on the floor.
-        const float GlowRadiusM = 0.45f;
-        const float PulseMinRadiusM = 0.15f;
-        const float PulseMaxRadiusM = 0.6f;
-        const float PulsePeriodS = 1.6f;
-        const float StillRingRadiusM = 0.35f;
+        const float BeamHeightM = 1.3f;
+        const float BeamWidthM = 0.02f;
+        const float RingWidthM = 0.015f;
+        // About a person's shoulder width.
+        const float DiscRadiusM = 0.25f;
+        const float PulseMinRadiusM = 0.25f;
+        const float PulseMaxRadiusM = 0.55f;
+        const float PulsePeriodS = 2f;
         const float FloorLiftM = 0.012f;
-        const float LabelGapM = 0.08f;
-        const float LabelCharacterSizeM = 0.045f;
+        const float LabelGapM = 0.06f;
+        const float LabelCharacterSizeM = 0.04f;
         const int LabelFontSize = 64;
-
-        static readonly Color Red = new(1f, 0.1f, 0.08f);
 
         readonly Dictionary<int, Transform> markers = new();
         readonly List<LineRenderer> rings = new();
@@ -75,14 +70,14 @@ namespace SkyLead.Map
 
         void Update()
         {
-            // Each ring grows and fades out, like a beacon, so a victim catches the eye on a busy map.
+            // A slow ring that grows and fades, so a victim catches the eye without flashing.
             float phase = Time.time / PulsePeriodS % 1f;
             float radius = Mathf.Lerp(PulseMinRadiusM, PulseMaxRadiusM, phase);
-            var color = new Color(Red.r, Red.g, Red.b, 1f - phase);
+            var color = new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0.6f * (1f - phase));
             foreach (LineRenderer ring in rings)
             {
                 ring.transform.localScale = Vector3.one * radius;
-                ring.startColor = ring.endColor = color;
+                ring.startColor = ring.endColor = OnMap(color);
             }
         }
 
@@ -102,40 +97,39 @@ namespace SkyLead.Map
             marker.SetParent(transform, false);
             var lift = new Vector3(0f, FloorLiftM, 0f);
 
-            MapShapes.MeshObject(marker, "Glow", MapShapes.Disc(GlowRadiusM, new Color(Red.r, Red.g, Red.b, 0.55f),
-                new Color(Red.r, Red.g, Red.b, 0f)), holoMaterial).transform.localPosition = lift;
-
-            LineRenderer outline = MapShapes.Line(marker, "Outline", glowMaterial, RingWidthM, true);
-            outline.transform.localPosition = lift;
-            MapShapes.SetCircle(outline, StillRingRadiusM);
-            outline.startColor = outline.endColor = Red;
+            MeshRenderer disc = MapShapes.MeshObject(marker, "Disc", MapShapes.Disc(DiscRadiusM, new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0.9f),
+                new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0.75f)), overlayMaterial);
+            disc.transform.localPosition = lift;
+            disc.sortingOrder = MapLayers.Victims;
 
             // A unit circle scaled by the pulse; the line's width does not scale with it.
-            LineRenderer ring = MapShapes.Line(marker, "Pulse", glowMaterial, RingWidthM, true);
+            LineRenderer ring = MapShapes.Line(marker, "Pulse", overlayMaterial, RingWidthM, true);
             ring.transform.localPosition = lift;
             MapShapes.SetCircle(ring, 1f);
-            ring.transform.localScale = Vector3.one * StillRingRadiusM;
-            ring.startColor = ring.endColor = new Color(Red.r, Red.g, Red.b, 0f);
+            ring.transform.localScale = Vector3.one * PulseMinRadiusM;
+            ring.startColor = ring.endColor = OnMap(new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0f));
+            ring.sortingOrder = MapLayers.Victims;
             rings.Add(ring);
 
-            LineRenderer beam = MapShapes.Line(marker, "Beam", glowMaterial, BeamWidthM, false);
+            LineRenderer beam = MapShapes.Line(marker, "Beam", overlayMaterial, BeamWidthM, false);
             beam.positionCount = 2;
             beam.SetPosition(0, Vector3.zero);
             beam.SetPosition(1, new Vector3(0f, BeamHeightM, 0f));
-            beam.startColor = Red;
-            beam.endColor = new Color(Red.r, Red.g, Red.b, 0f);
+            beam.startColor = OnMap(new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0.8f));
+            beam.endColor = OnMap(new Color(VictimRed.r, VictimRed.g, VictimRed.b, 0f));
+            beam.sortingOrder = MapLayers.Victims;
 
             var labelObject = new GameObject("Tag");
             labelObject.transform.SetParent(marker, false);
-            labelObject.transform.localPosition = new Vector3(0f, BeamHeightM + LabelGapM, 0f);
+            labelObject.transform.localPosition = new Vector3(DiscRadiusM + LabelGapM, FloorLiftM, 0f);
             var label = labelObject.AddComponent<TextMesh>();
             label.text = $"V{id}";
             label.font = MapFont.Get();
             label.fontSize = LabelFontSize;
             label.characterSize = LabelCharacterSizeM;
             label.fontStyle = FontStyle.Bold;
-            label.anchor = TextAnchor.LowerCenter;
-            label.color = new Color(1f, 0.85f, 0.85f);
+            label.anchor = TextAnchor.MiddleLeft;
+            label.color = OnMap(VictimRed);
             labelObject.GetComponent<MeshRenderer>().sharedMaterial = label.font.material;
             labelObject.SetActive(showLabels);
             labels.Add(label);

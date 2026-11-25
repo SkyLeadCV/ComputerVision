@@ -1,76 +1,74 @@
 using System.Collections.Generic;
 using UnityEngine;
+using static SkyLead.Map.HudStyle;
 
 namespace SkyLead.Map
 {
     /// <summary>
-    /// The path the drone has flown, drawn from the move messages; the drone itself, as a chevron at flight height
-    /// with its safety circle projected on the floor; and the floor its latest photo proved free.
+    /// The path the drone has flown, from the move messages, and the drone itself: a chevron at flight height with its
+    /// safety circle on the floor. A move arrives once it is over, so the drone glides to it at the real drone's pace
+    /// instead of jumping, and the trail grows behind it.
     /// </summary>
     public sealed class FlightTrail : MonoBehaviour
     {
-        [Tooltip("Bright vertex-coloured material: trail, chevron and outlines.")]
-        [SerializeField] Material glowMaterial;
-
-        [Tooltip("Faint vertex-coloured material: the latest scan on the floor.")]
-        [SerializeField] Material holoMaterial;
+        [Tooltip("Unlit, vertex-coloured material for the trail and the drone.")]
+        [SerializeField] Material overlayMaterial;
 
         // The agreed flight height, used until the first observation gives the real one; move carries no z.
         const float DefaultHeightCm = 80f;
         // docs/protocol.md's 9 + 15 cm, until session_start gives them.
         const float DefaultSafetyRadiusCm = 24f;
-        const float TrailWidthM = 0.035f;
-        const float OutlineWidthM = 0.012f;
-        const float ChevronLengthM = 0.32f;
-        // Overlays float just above the floor so they never flicker against its faces.
+        // The real drone's pace (SimulatedDrone and explorer.py's SyntheticDrone), so the glide lasts as long as the move.
+        const float SpeedCmS = 50f;
+        const float YawSpeedDegS = 90f;
+        const float TrailWidthM = 0.03f;
+        const float OutlineWidthM = 0.01f;
+        const float ChevronLengthM = 0.3f;
+        // Overlays float just above the floor so they never flicker against it.
         const float FloorLiftM = 0.01f;
         // A pure turn repeats the position up to float rounding of the brain's sin and cos.
         const float SamePointM = 0.01f;
 
-        static readonly Color Amber = new(1f, 0.4f, 0.04f);
-        static readonly Color ScanCyan = new(0.3f, 0.95f, 0.9f);
-
         readonly List<Vector3> points = new();
-        readonly List<Vector3> scanRim = new();
         float heightCm = DefaultHeightCm;
+        Vector2 shownCm, targetCm;
+        float shownYawDeg, targetYawDeg;
         LineRenderer trail;
         Transform drone;
         Transform footprint;
         LineRenderer drop;
-        MeshFilter scanFill;
-        LineRenderer scanEdge;
 
+        /// <summary>Every place the trail turns, in Unity metres; the drone may still be gliding towards the last one.</summary>
         public IReadOnlyList<Vector3> Points => points;
-
-        /// <summary>Where each ray of the latest photo stopped, on the floor; a ray that saw no floor stays at the drone.</summary>
-        public IReadOnlyList<Vector3> ScanRim => scanRim;
 
         public Transform Drone => EnsureDrone();
 
         public float SafetyRadiusCm { get; private set; } = DefaultSafetyRadiusCm;
 
-        /// <summary>Clear the trail and scan, and size the drone's safety circle for a new session.</summary>
+        /// <summary>True while the drone is still gliding to the last pose it was given.</summary>
+        public bool Moving => shownCm != targetCm || shownYawDeg != targetYawDeg;
+
+        /// <summary>How much faster than the real drone to glide, so a backlog of messages is caught up.</summary>
+        public float Pace { get; set; } = 1f;
+
+        /// <summary>Clear the trail and size the drone's safety circle for a new session.</summary>
         public void StartSession(SessionStart session)
         {
             points.Clear();
-            scanRim.Clear();
             heightCm = DefaultHeightCm;
+            shownCm = targetCm = Vector2.zero;
+            shownYawDeg = targetYawDeg = 0f;
             SafetyRadiusCm = session.drone_radius_cm + session.safety_margin_cm;
-            RedrawTrail();
+            Redraw();
             if (drone)
                 Remove(drone.gameObject);
             drone = null;
-            if (scanFill)
-                Remove(scanFill.transform.parent.gameObject);
-            scanFill = null;
         }
 
-        public void ShowObservation(Observation observation)
+        public void ShowPose(Pose pose)
         {
-            Pose pose = observation.pose;
             heightCm = pose.z;
-            PlaceDrone(pose.x, pose.y, pose.yaw_deg);
-            DrawScan(observation);
+            GoTo(new Vector2(pose.x, pose.y), pose.yaw_deg);
         }
 
         public void AddMove(Move move)
@@ -79,8 +77,32 @@ namespace SkyLead.Map
             // so a lost move leaves a straight jump instead of a gap.
             Append(move.@from);
             Append(move.to);
-            PlaceDrone(move.to.x, move.to.y, move.to.yaw_deg);
-            RedrawTrail();
+            GoTo(new Vector2(move.to.x, move.to.y), move.to.yaw_deg);
+        }
+
+        void GoTo(Vector2 positionCm, float yawDeg)
+        {
+            targetCm = positionCm;
+            // The shortest way round, as the drone turns: cw 270 and ccw 90 end the same.
+            targetYawDeg = shownYawDeg + Mathf.DeltaAngle(shownYawDeg, yawDeg);
+            if (!Application.isPlaying)
+            {
+                shownCm = targetCm;
+                shownYawDeg = targetYawDeg;
+            }
+            PlaceDrone();
+            Redraw();
+        }
+
+        void Update()
+        {
+            if (!Moving)
+                return;
+            float dt = Time.deltaTime * Pace;
+            shownCm = Vector2.MoveTowards(shownCm, targetCm, SpeedCmS * dt);
+            shownYawDeg = Mathf.MoveTowards(shownYawDeg, targetYawDeg, YawSpeedDegS * dt);
+            PlaceDrone();
+            Redraw();
         }
 
         void Append(PlanarPose pose)
@@ -95,86 +117,32 @@ namespace SkyLead.Map
             points.Add(point);
         }
 
-        void PlaceDrone(float xCm, float yCm, float yawDeg)
+        void PlaceDrone()
         {
             Transform marker = EnsureDrone();
             marker.gameObject.SetActive(true);
             // Unity's positive y rotation is clockwise seen from above, like yaw_deg (docs/protocol.md).
-            marker.SetLocalPositionAndRotation(VoxelGrid.ToUnity(xCm, yCm, heightCm), Quaternion.Euler(0f, yawDeg, 0f));
+            marker.SetLocalPositionAndRotation(VoxelGrid.ToUnity(shownCm.x, shownCm.y, heightCm), Quaternion.Euler(0f, shownYawDeg, 0f));
             float heightM = heightCm / 100f;
             footprint.localPosition = new Vector3(0f, FloorLiftM - heightM, 0f);
             drop.SetPosition(1, new Vector3(0f, FloorLiftM - heightM, 0f));
         }
 
-        /// <summary>
-        /// The floor this photo proved free, as a fan from the point under the camera to each ray's stop. It stays where
-        /// the photo was taken, so it shows exactly what the map has just carved, walls included.
-        /// </summary>
-        void DrawScan(Observation observation)
-        {
-            Pose pose = observation.pose;
-            Rays rays = observation.rays;
-            scanRim.Clear();
-            for (int i = 0; i < rays.angle_deg.Length; i++)
-            {
-                // A ray that saw no floor proves nothing free (docs/protocol.md), so it collapses onto the drone.
-                float distanceCm = rays.stop_cm[i] > rays.entry_cm[i] ? rays.stop_cm[i] : 0f;
-                float heading = Mathf.Deg2Rad * (pose.yaw_deg + rays.angle_deg[i]);
-                scanRim.Add(VoxelGrid.ToUnity(pose.x + distanceCm * Mathf.Sin(heading), pose.y + distanceCm * Mathf.Cos(heading), 0f));
-            }
-
-            EnsureScan();
-            Vector3 apex = VoxelGrid.ToUnity(pose.x, pose.y, 0f);
-            var vertices = new List<Vector3> { apex };
-            var colors = new List<Color> { new(ScanCyan.r, ScanCyan.g, ScanCyan.b, 0.05f) };
-            var triangles = new List<int>();
-            for (int i = 0; i < scanRim.Count; i++)
-            {
-                vertices.Add(scanRim[i]);
-                colors.Add(new Color(ScanCyan.r, ScanCyan.g, ScanCyan.b, 0.3f));
-                // Rays run left to right, so apex, ray, next ray is clockwise seen from above.
-                if (i > 0)
-                    triangles.AddRange(new[] { 0, i, i + 1 });
-            }
-            Mesh mesh = scanFill.sharedMesh;
-            mesh.Clear();
-            mesh.SetVertices(vertices);
-            mesh.SetColors(colors);
-            mesh.SetTriangles(triangles, 0);
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-
-            scanEdge.positionCount = scanRim.Count;
-            scanEdge.SetPositions(scanRim.ToArray());
-        }
-
-        void EnsureScan()
-        {
-            if (scanFill)
-                return;
-            var scan = new GameObject("Latest scan") { hideFlags = HideFlags.DontSave }.transform;
-            scan.SetParent(transform, false);
-            scan.localPosition = new Vector3(0f, FloorLiftM, 0f);
-            var mesh = new Mesh { name = "Latest scan", hideFlags = HideFlags.DontSave };
-            scanFill = MapShapes.MeshObject(scan, "Fill", mesh, holoMaterial).GetComponent<MeshFilter>();
-            scanEdge = MapShapes.Line(scan, "Edge", glowMaterial, OutlineWidthM, false);
-            scanEdge.startColor = scanEdge.endColor = new Color(ScanCyan.r, ScanCyan.g, ScanCyan.b, 0.8f);
-        }
-
-        void RedrawTrail()
+        /// <summary>The trail up to the drone: while it glides, the last leg ends where the drone is, not where it goes.</summary>
+        void Redraw()
         {
             if (!trail)
             {
-                trail = MapShapes.Line(transform, "Trail", glowMaterial, TrailWidthM, false);
-                // Older legs fade, so the direction of travel reads at a glance.
-                var gradient = new Gradient();
-                gradient.SetKeys(new[] { new GradientColorKey(Amber, 0f), new GradientColorKey(Amber, 1f) },
-                    new[] { new GradientAlphaKey(0.2f, 0f), new GradientAlphaKey(1f, 1f) });
-                trail.colorGradient = gradient;
+                trail = MapShapes.Line(transform, "Trail", overlayMaterial, TrailWidthM, false);
+                trail.startColor = trail.endColor = OnMap(DroneBlue);
+                trail.sortingOrder = MapLayers.Trail;
             }
-            trail.positionCount = points.Count;
-            for (int i = 0; i < points.Count; i++)
+            int count = points.Count;
+            trail.positionCount = count;
+            for (int i = 0; i < count; i++)
                 trail.SetPosition(i, points[i]);
+            if (Moving && count > 0)
+                trail.SetPosition(count - 1, VoxelGrid.ToUnity(shownCm.x, shownCm.y, heightCm));
         }
 
         Transform EnsureDrone()
@@ -183,22 +151,22 @@ namespace SkyLead.Map
                 return drone;
             drone = new GameObject("Drone") { hideFlags = HideFlags.DontSave }.transform;
             drone.SetParent(transform, false);
-            MapShapes.MeshObject(drone, "Chevron", ChevronMesh(), glowMaterial);
+            MapShapes.MeshObject(drone, "Chevron", ChevronMesh(), overlayMaterial).sortingOrder = MapLayers.Drone;
 
-            drop = MapShapes.Line(drone, "Drop line", glowMaterial, OutlineWidthM / 2f, false);
+            drop = MapShapes.Line(drone, "Drop line", overlayMaterial, OutlineWidthM / 2f, false);
             drop.positionCount = 2;
             drop.SetPosition(0, Vector3.zero);
-            drop.startColor = new Color(Amber.r, Amber.g, Amber.b, 0.6f);
-            drop.endColor = new Color(Amber.r, Amber.g, Amber.b, 0.1f);
+            drop.startColor = OnMap(new Color(DroneBlue.r, DroneBlue.g, DroneBlue.b, 0.5f));
+            drop.endColor = OnMap(new Color(DroneBlue.r, DroneBlue.g, DroneBlue.b, 0.1f));
 
             footprint = new GameObject("Footprint") { hideFlags = HideFlags.DontSave }.transform;
             footprint.SetParent(drone, false);
-            MapShapes.MeshObject(footprint, "Glow", MapShapes.Disc(SafetyRadiusCm / 100f,
-                new Color(Amber.r, Amber.g, Amber.b, 0.35f), new Color(Amber.r, Amber.g, Amber.b, 0.05f)), holoMaterial);
-
-            LineRenderer safety = MapShapes.Line(footprint, "Safety circle", glowMaterial, OutlineWidthM, true);
+            MapShapes.MeshObject(footprint, "Safety area", MapShapes.Disc(SafetyRadiusCm / 100f,
+                new Color(DroneBlue.r, DroneBlue.g, DroneBlue.b, 0.18f), new Color(DroneBlue.r, DroneBlue.g, DroneBlue.b, 0.08f)), overlayMaterial).sortingOrder = MapLayers.Drone;
+            LineRenderer safety = MapShapes.Line(footprint, "Safety circle", overlayMaterial, OutlineWidthM, true);
             MapShapes.SetCircle(safety, SafetyRadiusCm / 100f);
-            safety.startColor = safety.endColor = Amber;
+            safety.startColor = safety.endColor = OnMap(new Color(DroneBlue.r, DroneBlue.g, DroneBlue.b, 0.7f));
+            safety.sortingOrder = MapLayers.Drone;
 
             drone.gameObject.SetActive(false);
             return drone;
@@ -213,7 +181,8 @@ namespace SkyLead.Map
             var left = new Vector3(-half * 0.8f, 0f, -half);
             var mesh = new Mesh { name = "Chevron", hideFlags = HideFlags.DontSave };
             mesh.SetVertices(new[] { tip, right, notch, left });
-            mesh.SetColors(new[] { Amber, Amber, Amber, Amber });
+            Color blue = OnMap(DroneBlue);
+            mesh.SetColors(new[] { blue, blue, blue, blue });
             // Clockwise seen from above, so the chevron faces the map's cameras.
             mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
             mesh.SetNormals(new[] { Vector3.up, Vector3.up, Vector3.up, Vector3.up });
