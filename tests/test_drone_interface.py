@@ -189,7 +189,7 @@ def test_a_landing_that_fails_stops_the_motors(tello, landing):
 def test_unity_landing_that_never_answers_ends_the_flight_quickly(simulator, monkeypatch):
     monkeypatch.setattr(drone_interface, "LAND_TIMEOUT_S", 0.2)
     simulator.replies["land"] = None
-    drone = UnityDrone("127.0.0.1", simulator.port)
+    drone = UnityDrone(simulator.server.getsockname()[0], simulator.port)
     drone.send("takeoff")
     start = time.monotonic()
     drone.close()
