@@ -9,7 +9,6 @@ namespace SkyLead.Simulator
         public Material Wall;
         public Material Tables;
         public Material VictimShirt;
-        public Material RescuerShirt;
         public Material Trousers;
         public Material Shoes;
         public Material Hair;
@@ -55,6 +54,14 @@ namespace SkyLead.Simulator
         const float StandingHeightCm = 169f;
         // Lying on the back, the chest's half depth lifts the body off the floor.
         const float LyingLiftCm = 9.5f;
+        // Sitting on the floor: the hip joint, where the legs bend forward, drops from standing height to the hips'
+        // half thickness above the floor, which puts the top of the head near 89 cm.
+        static readonly Vector3 StandingHipCm = new(0f, 92f, 0f);
+        static readonly Vector3 SittingHipCm = new(0f, 12f, 0f);
+        // Turns the legs from hanging down to lying forward along +z, the way the person faces.
+        static readonly Quaternion LegsForward = Quaternion.Euler(-90f, 0f, 0f);
+
+        public enum Posture { Lying, Sitting }
 
         enum Garment { Skin, Hair, Shirt, Trousers, Shoes }
 
@@ -74,8 +81,7 @@ namespace SkyLead.Simulator
             Vector2 tablesMin = ClassroomLayout.TablesMinCm, tablesMax = ClassroomLayout.TablesMaxCm;
             Box("Tables Block", new Vector3(tablesMin.x, tablesMin.y, 0f), new Vector3(tablesMax.x, tablesMax.y, ceiling), look.Tables, room.transform);
 
-            Person("Victim", ClassroomLayout.Victim, lying: true, look.VictimShirt, look, room.transform);
-            Person("Rescuer", ClassroomLayout.Rescuer, lying: false, look.RescuerShirt, look, room.transform);
+            Person("Victim", ClassroomLayout.Victim, Posture.Sitting, look.VictimShirt, look, room.transform);
             return room;
         }
 
@@ -105,10 +111,10 @@ namespace SkyLead.Simulator
         }
 
         /// <summary>
-        /// A person facing the placement's heading when standing. Lying, it lies on its back with the head towards the
-        /// heading and the middle of the body on the placement.
+        /// A person on the floor. Lying, it lies on its back with the head towards the placement's heading and the middle
+        /// of the body on the placement. Sitting, its hips are on the placement and it faces the heading, legs out in front.
         /// </summary>
-        static void Person(string name, PersonPlacement placement, bool lying, Material shirt, ClassroomLook look, Transform parent)
+        static void Person(string name, PersonPlacement placement, Posture posture, Material shirt, ClassroomLook look, Transform parent)
         {
             var person = new GameObject(name).transform;
             person.SetParent(parent, false);
@@ -117,7 +123,7 @@ namespace SkyLead.Simulator
 
             var body = new GameObject("Body").transform;
             body.SetParent(person, false);
-            if (lying)
+            if (posture == Posture.Lying)
             {
                 // Tipping backwards turns the face (+z) up and the head to -z; turning round then puts the head at +z.
                 body.localRotation = Quaternion.Euler(0f, 180f, 0f) * Quaternion.Euler(-90f, 0f, 0f);
@@ -129,7 +135,18 @@ namespace SkyLead.Simulator
                 var part = GameObject.CreatePrimitive(shape);
                 part.name = partName;
                 part.transform.SetParent(body, false);
-                part.transform.SetLocalPositionAndRotation(centreCm / 100f, Quaternion.Euler(tiltDeg));
+                Vector3 centre = centreCm;
+                Quaternion tilt = Quaternion.Euler(tiltDeg);
+                if (posture == Posture.Sitting)
+                {
+                    // The upper body drops straight down onto the floor; the legs also swing forward about the hip.
+                    Vector3 fromHip = centreCm - StandingHipCm;
+                    bool leg = partName.Contains("Thigh") || partName.Contains("Shin") || partName.Contains("Foot");
+                    centre = SittingHipCm + (leg ? LegsForward * fromHip : fromHip);
+                    if (leg)
+                        tilt = LegsForward * tilt;
+                }
+                part.transform.SetLocalPositionAndRotation(centre / 100f, tilt);
                 // A capsule primitive is 2 units long, so its length scale is half the length.
                 Vector3 scale = shape == PrimitiveType.Capsule ? new Vector3(sizeCm.x, sizeCm.y / 2f, sizeCm.z) : sizeCm;
                 part.transform.localScale = scale / 100f;

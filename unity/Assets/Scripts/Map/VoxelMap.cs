@@ -27,8 +27,11 @@ namespace SkyLead.Map
         readonly Dictionary<Vector3Int, Mesh> chunkMeshes = new();
         readonly List<Vector3Int> dirtyChunks = new();
         readonly ChunkMeshData meshData = new();
+        const string ChunkPrefix = "Chunk ";
+
         CameraFov fov;
         string sessionName;
+        bool blocksVisible = true;
         bool warnedNoSession;
 
         public VoxelGrid Grid { get; private set; }
@@ -51,6 +54,34 @@ namespace SkyLead.Map
             return true;
         }
 
+        /// <summary>
+        /// Excavate what an observation proves, or part of it: with a progress below 1 each ray only reaches that
+        /// fraction of the way from its blind zone's edge to its stop, and no obstacle face is painted yet. Emptying
+        /// is idempotent, so growing the progress to 1 ends exactly as one full observation does.
+        /// </summary>
+        public void Observe(Observation observation, float progress)
+        {
+            if (progress >= 1f)
+            {
+                Observe(observation);
+                return;
+            }
+            Rays rays = observation.rays;
+            var partial = new Rays
+            {
+                angle_deg = rays.angle_deg,
+                entry_cm = rays.entry_cm,
+                stop_cm = new float[rays.stop_cm.Length],
+                kind = new int[rays.kind.Length],
+            };
+            for (int i = 0; i < rays.stop_cm.Length; i++)
+            {
+                partial.stop_cm[i] = Mathf.Lerp(rays.entry_cm[i], rays.stop_cm[i], progress);
+                partial.kind[i] = RayKind.TrustedRange;
+            }
+            Observe(new Observation { pose = observation.pose, rays = partial });
+        }
+
         public void Observe(Observation observation)
         {
             // The vertical field of view only arrives in session_start, and without it the fans cannot be drawn.
@@ -62,6 +93,17 @@ namespace SkyLead.Map
                 return;
             }
             Excavator.Apply(Grid, observation, fov);
+        }
+
+        /// <summary>The blocks belong to the 3D view; from above, the floor plan draws the map instead.</summary>
+        public void ShowBlocks(bool visible)
+        {
+            blocksVisible = visible;
+            foreach (Transform chunk in transform)
+            {
+                if (chunk.name.StartsWith(ChunkPrefix))
+                    chunk.gameObject.SetActive(visible);
+            }
         }
 
         public void RebuildDirtyChunks()
@@ -87,7 +129,8 @@ namespace SkyLead.Map
                 return mesh;
 
             // Chunks are rebuilt from the grid on every run, so they are never saved with the scene.
-            var chunkObject = new GameObject($"Chunk {chunk.x} {chunk.y} {chunk.z}") { hideFlags = HideFlags.DontSave };
+            var chunkObject = new GameObject($"{ChunkPrefix}{chunk.x} {chunk.y} {chunk.z}") { hideFlags = HideFlags.DontSave };
+            chunkObject.SetActive(blocksVisible);
             chunkObject.transform.SetParent(transform, false);
             mesh = new Mesh { name = chunkObject.name, hideFlags = HideFlags.DontSave };
             chunkObject.AddComponent<MeshFilter>().sharedMesh = mesh;

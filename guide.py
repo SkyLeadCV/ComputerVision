@@ -76,10 +76,9 @@ class Guide:
             if rescuer is None:
                 distance, allowed = -1.0, 0.0
             else:
-                ahead, sideways = rescuer_offset_cm(rescuer, self.camera_matrix)
-                distance = math.hypot(ahead, sideways)
-                # Going back d leaves the rescuer at hypot(ahead + d, sideways), which must stay within reach.
-                allowed = math.sqrt(max(MAX_RESCUER_CM ** 2 - sideways ** 2, 0.0)) - ahead
+                distance = math.hypot(*rescuer_offset_cm(rescuer, self.camera_matrix))
+                # Going back d leaves the rescuer at most distance + d away, wherever it steps meanwhile.
+                allowed = MAX_RESCUER_CM - distance
             close = allowed >= MIN_FORWARD_CM
             self.guiding |= close
             explorer.map.send("state", explorer.clock(), mode="guiding" if self.guiding else "waiting",

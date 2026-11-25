@@ -51,7 +51,7 @@ namespace SkyLead.Simulator
             var image = new Rect(width - MarginPx - InsetWidthPx, ReferenceHeightPx - MarginPx - imageHeight, InsetWidthPx, imageHeight);
             var bar = new Rect(image.x, image.y - TitleHeightPx, image.width, TitleHeightPx);
 
-            Fill(new Rect(bar.x - 1f, bar.y - 1f, bar.width + 2f, bar.height + image.height + 2f), Panel);
+            CardFrame(new Rect(bar.x, bar.y, bar.width, bar.height + image.height));
             GUI.DrawTexture(image, feed, ScaleMode.ScaleToFit, false);
 
             // The image stays for recordings; only the text follows the map's H key.
@@ -59,7 +59,7 @@ namespace SkyLead.Simulator
             if (hud != null && !hud.TextVisible)
                 return;
             CreateStyles();
-            GUI.Label(new Rect(bar.x + 10f, bar.y, 200f, bar.height), "DRONE CAMERA", title);
+            GUI.Label(new Rect(bar.x + 10f, bar.y, 200f, bar.height), "Drone camera", title);
             bool photo = Time.unscaledTime - telloCamera.LastPhotoTime < PhotoNoticeS;
             string state = $"{Mathf.RoundToInt(Drone.PositionCm.z)} cm · {Mathf.RoundToInt(Mathf.Repeat(Drone.YawDeg, 360f)):000}°";
             caption.alignment = TextAnchor.MiddleRight;
@@ -70,10 +70,8 @@ namespace SkyLead.Simulator
         {
             if (title != null)
                 return;
-            title = new GUIStyle { font = MapFont.Get(), fontSize = 14, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
-            title.normal.textColor = Color.white;
-            caption = new GUIStyle { font = MapFont.Get(), fontSize = 13 };
-            caption.normal.textColor = Dim;
+            title = Text(14, Ink, FontStyle.Bold);
+            caption = Text(13, Muted);
         }
     }
 }

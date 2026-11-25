@@ -6,7 +6,7 @@ import pytest
 import explorer
 
 # The pad and four others spread over the arms and the top band of docs/classroom.md, clear of the victim.
-TAKEOFFS_CM = [(60, 60), (415, 60), (230, 430), (60, 480), (420, 380)]
+TAKEOFFS_CM = [(60, 60), (415, 160), (230, 430), (60, 480), (420, 380)]
 
 
 def synthetic_mission(camera_matrix, monkeypatch, takeoff_cm=(60, 60), guided=False):
