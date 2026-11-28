@@ -49,6 +49,8 @@ UNKNOWN, FREE, OBSTACLE = 0, 1, 2
 
 # Just under the 54.5 degree field of view, so the three photos of a stop leave no gap between them.
 SWEEP_TURN_DEG = 54
+# The next photo on each side, so that five photos cover about 270 degrees when the usual three found no tile.
+WIDE_TURN_DEG = 2 * SWEEP_TURN_DEG
 # Candidate headings for the next move, relative to the heading the stop started with.
 HEADING_STEP_DEG = 5
 MAX_HEADING_DEG = 80
@@ -624,6 +626,8 @@ class Explorer:
         self.blind_zone_cm = STEP_LIMIT_CM
         self.stop_positions: list[np.ndarray] = []
         self.stops = 0
+        # Heading and length of the last forward, whose trail the drone may back off along.
+        self.last_forward: tuple[float, float] | None = None
         # Each known victim: its id and every map position it was seen at; the marker sits at their mean.
         self.victims: list[tuple[int, list[np.ndarray]]] = []
         self.output_dir = OUTPUT_DIR
@@ -642,6 +646,8 @@ class Explorer:
         if reply != "ok":
             raise RuntimeError(f"{command}: {reply}")
         name, _, value = command.partition(" ")
+        if name == "forward":
+            self.last_forward = (self.yaw_deg, float(value))
         if name in ("forward", "back"):
             end = self.position + (1.0 if name == "forward" else -1.0) * float(value) * direction(self.yaw_deg)
             self.grid.add_trail(self.position, end)
@@ -655,17 +661,15 @@ class Explorer:
             self.command(f"cw {turn}" if turn > 0 else f"ccw {-turn}")
 
     def look(self) -> FreeSpace | None:
-        """Take a photo and add it to the grid and the map; a photo without a reference tile is retaken once."""
+        """Take a photo and add it to the grid and the map; None when it has no reference tile.
+
+        A photo without a tile is not retaken: taken at once, the retake was the same video frame in every case of
+        the first real explorations. Turning or moving is what brings a tile into view (sweep, recover).
+        """
         free_space, victims = self.see()
         self.note_photo(free_space, victims)
-        if free_space is None:
-            free_space, more = self.see()
-            self.note_photo(free_space, more, retake=True)
-            victims = victims + more
         self.report_victims(victims)
         if free_space is None:
-            self.log.note("unknown", f"no tile in either photo at yaw {self.yaw_deg:.0f}: this direction stays unknown",
-                          yaw_deg=self.yaw_deg)
             return None
         rays = trusted_rays(free_space)
         self.grid.add_observation(self.position, self.yaw_deg, rays)
@@ -681,16 +685,16 @@ class Explorer:
         })
         return free_space
 
-    def note_photo(self, free_space: FreeSpace | None, victims: list[Victim], retake: bool = False) -> None:
+    def note_photo(self, free_space: FreeSpace | None, victims: list[Victim]) -> None:
         """Everything the photo told the explorer, tied to its file by number when the flight is recorded."""
         photo = getattr(self.drone, "photos", None)
         name = f"photo {photo}" if photo else "photo"
         found = [{"right_cm": v.floor_cm[0], "forward_cm": v.floor_cm[1], "confidence": v.confidence, "top_cm": v.top_cm}
                  for v in victims]
-        common = dict(photo=photo, retake=retake, position=self.position, yaw_deg=self.yaw_deg, victims=found)
+        common = dict(photo=photo, position=self.position, yaw_deg=self.yaw_deg, victims=found)
         if free_space is None:
-            self.log.note("photo", f"{name} at yaw {self.yaw_deg:.0f}: no reference tile"
-                          + (", giving up on it" if retake else ", retaking it") + f"; {len(victims)} victims", **common)
+            self.log.note("photo", f"{name} at yaw {self.yaw_deg:.0f}: no reference tile, this direction stays unknown; "
+                          f"{len(victims)} victims", **common)
             return
         ahead = int(np.argmin(np.abs(free_space.angle_deg)))
         kinds = {name: int(np.sum(free_space.kind == kind)) for name, kind in
@@ -722,15 +726,46 @@ class Explorer:
             self.map.send("victim", self.clock(), id=known[0], x=round(float(x), 1), y=round(float(y), 1),
                           confidence=round(victim.confidence, 2))
 
-    def sweep(self) -> float:
-        """Photos to the left, ahead and to the right; returns the heading the stop is planned from."""
+    def sweep(self) -> tuple[float, int]:
+        """Photos ahead, to the right and to the left; returns the heading the stop is planned from and how many of
+        the photos had a tile."""
         centre = self.yaw_deg
-        self.look()
+        tiles = self.look() is not None
         self.turn(SWEEP_TURN_DEG)
-        self.look()
+        tiles += self.look() is not None
         self.turn(-2 * SWEEP_TURN_DEG)
-        self.look()
-        return centre
+        tiles += self.look() is not None
+        return centre, tiles
+
+    def recover(self, centre_deg: float) -> tuple[float, int]:
+        """A sweep without a single tile: most likely a wall inside the blind zone, which leaves too thin a strip of
+        floor for a whole tile (photos 15-30 and 49-62 of the first long real exploration, 1.3-1.5 m from walls).
+
+        Face the way the last forward went, towards the wall, and back off half of it: the camera keeps looking at
+        the wall while the drone retraces its own trail, which it flew and so is free though the camera cannot see
+        behind. The sweep from there sees a row of tiles and the floor up to the wall, which measures how far the
+        wall is. If there is still no tile, or nothing to back off along, open the fan with a photo further round
+        on each side. Returns the heading to plan from and how many photos had a tile.
+        """
+        tiles = 0
+        if self.last_forward is not None and self.last_forward[1] / 2 >= MIN_FORWARD_CM:
+            heading, distance = self.last_forward
+            back = int(distance / 2)
+            self.log.note("recover", f"no tile in the sweep: facing yaw {heading:.0f} again and backing off {back} cm "
+                          f"along the trail of its last forward ({distance:.0f} cm) to see the floor up to the wall",
+                          heading_deg=heading, back_cm=back)
+            self.turn(heading - self.yaw_deg)
+            self.command(f"back {back}")
+            # Only once per move: the next sweep starts from here.
+            self.last_forward = None
+            centre_deg, tiles = self.sweep()
+        if tiles == 0:
+            self.log.note("recover", f"still no tile: photos {WIDE_TURN_DEG} deg either side of yaw {centre_deg:.0f}",
+                          centre_deg=centre_deg)
+            for relative in (WIDE_TURN_DEG, -WIDE_TURN_DEG):
+                self.turn(centre_deg + relative - self.yaw_deg)
+                tiles += self.look() is not None
+        return centre_deg, tiles
 
     def revisits(self, point: np.ndarray) -> bool:
         return any(np.linalg.norm(point - old) < REVISIT_CM for old in self.stop_positions)
@@ -905,6 +940,9 @@ class Explorer:
     def return_home(self) -> float | None:
         """Fly back to take-off over safe floor and the trail, which always leads back to the pad.
         Returns the distance left to the pad, or None when there is no path."""
+        if np.linalg.norm(self.position) < MIN_FORWARD_CM:
+            # Already home: its own cell may never have been seen free, if it never left the pad.
+            return float(np.linalg.norm(self.position))
         path = self.path_to(np.zeros(2))
         if path is None:
             self.log.note("home", "no path home: the drone's cell is not passable", position=self.position)
@@ -1000,7 +1038,9 @@ class Explorer:
             self.log.note("stop", f"stop {self.stops} at ({self.position[0]:.0f}, {self.position[1]:.0f}), yaw "
                           f"{self.yaw_deg:.0f}, height {self.state['height_cm']:.0f} cm, battery {self.state['battery_pct']:.0f} %",
                           stop=self.stops, position=self.position, yaw_deg=self.yaw_deg, state=self.state)
-            centre = self.sweep()
+            centre, tiles = self.sweep()
+            if tiles == 0:
+                centre, _ = self.recover(centre)
             # The three photos just covered these cells within reach and still could not see them.
             unseen = self.grid.unseen_in_view(self.position, centre, self.blind_zone_cm + STEP_LIMIT_CM, self.sweep_half_fov())
             self.grid.give_up(unseen)
@@ -1011,7 +1051,7 @@ class Explorer:
                 # A dead end: look behind before deciding there is nothing left here.
                 self.log.note("dead_end", "no valid heading ahead: turning round to sweep behind")
                 self.turn(centre + 180 - self.yaw_deg)
-                centre = self.sweep()
+                centre, _ = self.sweep()
                 options = self.candidates(centre)
             write_image(self.output_dir / f"1_grid_stop{self.stops:02d}.png",
                         self.draw(f"stop {self.stops}", (centre + options[0][0], options[0][1]) if options else None))
